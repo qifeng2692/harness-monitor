@@ -6,26 +6,63 @@
 
 Hermes · Codex · Claude Code · pi · magpie（网关用量）
 
+## 使用
+
+### 快速开始
+
+双击 `scripts\hm.cmd`（增量采集 + 打开 TUI），或命令行：
+
+```bash
+hm tui                       # 打开 TUI（已装到 ~/bin，HM_DATA_DIR 已设为用户环境变量）
+```
+
+如果 `HM_DATA_DIR` 尚未生效（旧终端会话），显式指定：
+
+```bash
+HM_DATA_DIR=G:/projects/harness-monitor/data hm tui          # git-bash
+```
+```powershell
+$env:HM_DATA_DIR="G:/projects/harness-monitor/data"; hm tui  # PowerShell
+```
+
+### TUI 操作（三级导航：harness → 会话 → 时间线）
+
+```
+harness 层： ↑↓ 选 harness → enter 进入；f 搜索（限定当前 harness）
+会话层：    ↑↓ 选会话 → enter 进入；F 前缀过滤；esc 返回
+时间线层：  ↑↓ 滚动步骤 → enter 展开全文
+            space 进入回放（n/→ 下一步 · p/← 上一步 · esc 退出）
+            l 切换 live 跟随（每 2s 增量采集，自动滚到底部）
+任意层：    / 搜索（搜所有内容原文，enter 跳转定位）· ? 帮助 · r 刷新 · q 退出
+```
+
+### CLI 快捷命令
+
+```bash
+hm collect --harness codex --incremental   # 增量采集（幂等；不带 --incremental 为全量回填）
+hm ls --harness hermes                     # 会话列表
+hm show codex <session-id>                 # 会话时间线
+hm show codex <session-id> --full          # 全文模式
+hm version
+```
+
+数据：`data/hm.db`（SQLite；环境变量 `HM_DATA_DIR` 覆盖数据目录）。
+
 ## 开发环境（Windows / git-bash）
 
-首次准备（Go 1.27.1 已装在 `C:\dev\go`）：
+Go 1.27.1 已装在 `C:\dev\go`。首次准备：
 
 ```bash
-source scripts/env.sh   # 提供 Go PATH + 模块下载代理（必需）
+source scripts/env.sh   # Go PATH + 模块下载代理（必需）
 ```
 
-构建与运行：
+构建与测试：
 
 ```bash
-go build ./...
-go run ./cmd/hm --help
-go run ./cmd/hm collect --harness magpie   # 采集（幂等，可重复执行）
-go run ./cmd/hm ls --harness magpie        # 会话列表
-go run ./cmd/hm show magpie hermes         # 会话时间线（--full 显示内容全文）
-go run ./cmd/hm                            # TUI（三级导航）
+go build ./... && go vet ./...
+go test ./... -count=1
+go build -o bin/hm.exe ./cmd/hm
 ```
-
-数据：`data/hm.db`（SQLite；环境变量 `HM_DATA_DIR` 可覆盖）。
 
 ## 文档
 
