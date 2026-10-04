@@ -483,7 +483,11 @@ func (r *claudeRun) flush() error {
 }
 
 // report 把详细统计打印到 stderr（files/lines/events/bad/未映射类型）。
+// 默认静默（双击 exe 场景控制台干净）；HM_DEBUG=1 时输出。
 func (r *claudeRun) report() {
+	if os.Getenv("HM_DEBUG") == "" {
+		return
+	}
 	out := os.Stderr
 	fmt.Fprintf(out, "claude: files=%d lines=%d events=%d inserted=%d skipped=%d bad=%d known_skip=%d\n",
 		r.files, r.lines, r.inserted+r.skipped, r.inserted, r.skipped, r.bad, r.skippedKnown)
