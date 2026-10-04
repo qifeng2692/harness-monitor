@@ -86,6 +86,16 @@ func key(t *testing.T, m *Model, k string) *Model {
 		msg = tea.KeyMsg{Type: tea.KeyUp}
 	case "down":
 		msg = tea.KeyMsg{Type: tea.KeyDown}
+	case "left":
+		msg = tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		msg = tea.KeyMsg{Type: tea.KeyRight}
+	case "space":
+		msg = tea.KeyMsg{Type: tea.KeySpace}
+	case "tab":
+		msg = tea.KeyMsg{Type: tea.KeyTab}
+	case "backspace":
+		msg = tea.KeyMsg{Type: tea.KeyBackspace}
 	default:
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 	}
@@ -241,9 +251,9 @@ func TestSessionFilterPrefixMatch(t *testing.T) {
 	if len(m.sessions) != 2 {
 		t.Fatalf("过滤前会话数=%d，期望 2", len(m.sessions))
 	}
-	m = key(t, m, "/")
+	m = key(t, m, "F")
 	if !m.filtering {
-		t.Fatal("/ 未进入过滤输入")
+		t.Fatal("F 未进入过滤输入")
 	}
 	for _, c := range "sess-ot" {
 		m = key(t, m, string(c))
@@ -269,7 +279,7 @@ func TestFilterKeepsSelection(t *testing.T) {
 	if m.sessions[m.sessIdx].SessionID != "sess-other" {
 		t.Fatalf("未选中 sess-other: %+v", m.sessions[m.sessIdx])
 	}
-	m = key(t, m, "/")
+	m = key(t, m, "F")
 	m = key(t, m, "s")
 	if m.sessions[m.sessIdx].SessionID != "sess-other" {
 		t.Fatalf("过滤后选中项被重置: %+v", m.sessions[m.sessIdx])

@@ -64,6 +64,7 @@ func newVersionCmd() *cobra.Command {
 
 func newCollectCmd() *cobra.Command {
 	var harness string
+	var incremental bool
 	cmd := &cobra.Command{
 		Use:   "collect",
 		Short: "采集各 harness 的事件到本地库（幂等、增量）",
@@ -78,7 +79,6 @@ func newCollectCmd() *cobra.Command {
 			names := collect.Names()
 			if harness != "" {
 				if collect.Get(harness) == nil {
-					// M1-1 骨架：真实采集器尚未实现。
 					fmt.Fprintf(out, "not implemented: harness %q 采集器尚未实现（已注册：%s）\n",
 						harness, orNone(names))
 					return nil
@@ -90,6 +90,16 @@ func newCollectCmd() *cobra.Command {
 				return nil
 			}
 			for _, name := range names {
+				if incremental {
+					// 增量续读：从上次 offset 起只读新增（live 跟随用同一路径）。
+					n, err := collect.CollectIncremental(name, s)
+					if err != nil {
+						fmt.Fprintf(out, "%s: 增量采集失败: %v\n", name, err)
+						continue
+					}
+					fmt.Fprintf(out, "harness=%s incremental inserted=%d\n", name, n)
+					continue
+				}
 				c := collect.Get(name)
 				stats, err := c.Collect(s)
 				if err != nil {
@@ -102,6 +112,7 @@ func newCollectCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&harness, "harness", "", "只采集指定 harness（默认全部）")
+	cmd.Flags().BoolVar(&incremental, "incremental", false, "增量续读（只读上次 offset 之后的新增行；live 跟随用）")
 	return cmd
 }
 

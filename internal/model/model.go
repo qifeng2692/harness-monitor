@@ -47,3 +47,18 @@ type Session struct {
 	LastTime   time.Time
 	Title      string
 }
+
+// IngestPos 是某数据源已被消费到的位置，用于增量续读（live 跟随）。
+//
+// 对文件型数据源：Offset 是已消费的字节数（且恰好停在某个换行之后），
+// Lines 是已消费的物理行数（换行符计数，含空行），用于复现与全量采集一致的
+// source_key（行号）。Size/MTime 仅用于诊断（文件被截断/轮转时判定重启）。
+//
+// 对非文件型数据源（如 Hermes 的 SQLite state.db）只使用 Offset 作为水位线
+// （例如 messages 表已消费的最大 id）。
+type IngestPos struct {
+	Offset int64
+	Lines  int64
+	Size   int64
+	MTime  time.Time
+}

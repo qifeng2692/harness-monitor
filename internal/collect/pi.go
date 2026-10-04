@@ -31,6 +31,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -73,6 +74,24 @@ func PiSessionsDir() (string, error) {
 
 // Collect 流式扫描全部会话 JSONL 并幂等写入事件。
 func (piCollector) Collect(sink Sink) (Stats, error) {
+	return piCollect(sink, nil)
+}
+
+// CollectIncremental 实现增量续读：从上次保存的 offset 起读各文件新增行。
+//
+// 首次运行（无 ingest_state）时，对已入库的历史文件从末尾起跟、对新文件从头补。
+func (piCollector) CollectIncremental(sink TailSink) (int, bool, error) {
+	states, err := sink.IngestStates(piHarness)
+	if err != nil {
+		return 0, false, err
+	}
+	stats, err := piCollect(sink, states)
+	return stats.Inserted, true, err
+}
+
+// piCollect 是 Collect 与 CollectIncremental 的共用实现。
+// states 为 nil 时全量扫描；非 nil 时按各文件已存 offset 增量续读。
+func piCollect(sink Sink, states map[string]model.IngestPos) (Stats, error) {
 	stats := Stats{Harness: piHarness}
 
 	root, err := PiSessionsDir()
@@ -91,11 +110,14 @@ func (piCollector) Collect(sink Sink) (Stats, error) {
 
 	r := &piRun{sink: sink, root: root, unmapped: map[string]int{}}
 	for _, p := range files {
-		if err := r.collectFile(p); err != nil {
+		if err := r.collectFile(p, states); err != nil {
 			return stats, err
 		}
 	}
 	if err := r.flush(); err != nil {
+		return stats, err
+	}
+	if err := r.saveStates(sink, states); err != nil {
 		return stats, err
 	}
 
@@ -103,6 +125,7 @@ func (piCollector) Collect(sink Sink) (Stats, error) {
 	stats.Inserted = r.inserted
 	stats.Skipped = r.skipped
 	stats.BadLines = r.bad
+	stats.Increment = states != nil
 	r.report()
 	return stats, nil
 }
@@ -141,9 +164,10 @@ type piRun struct {
 	unmapped                             map[string]int // 未映射顶层 type / 块类型 / role → 次数
 	heapPeak                             uint64         // 采集期间 HeapAlloc 峰值
 	err                                  error
+	nextPos                              map[string]model.IngestPos // 增量模式下各文件的新位置
 }
 
-func (r *piRun) collectFile(p string) error {
+func (r *piRun) collectFile(p string, states map[string]model.IngestPos) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -154,7 +178,17 @@ func (r *piRun) collectFile(p string) error {
 	rel = filepath.ToSlash(rel)
 	r.files++
 
+	fi, err := os.Stat(p)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", rel, err)
+	}
+	start, _ := resolveStart(rel, states, fi.Size())
+	pos := start
+
+	// session_id 来自文件首行 session.id，实测等于文件名 uuid（piFileSessionID）。
+	// 续读（offset>0）时首行已消费，直接用文件名派生，避免每轮重开文件读首行。
 	fallback := piFileSessionID(rel)
+	sid := fallback
 
 	f, err := os.Open(p)
 	if err != nil {
@@ -164,9 +198,16 @@ func (r *piRun) collectFile(p string) error {
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1<<20), piScannerMaxToken)
-	lineNo := 0
-	sid := ""
+	sc.Split(splitCompleteLines)
+	lineNo := int(pos.Lines)
+	if pos.Offset > 0 {
+		if _, err := f.Seek(pos.Offset, io.SeekStart); err != nil {
+			return fmt.Errorf("seek %s: %w", rel, err)
+		}
+	}
+	consumed := start.Offset
 	for sc.Scan() {
+		consumed += int64(len(sc.Bytes())) + 1
 		lineNo++
 		line := bytes.TrimRight(sc.Bytes(), "\r")
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -199,7 +240,27 @@ func (r *piRun) collectFile(p string) error {
 	if err := sc.Err(); err != nil {
 		return fmt.Errorf("读取 %s: %w", rel, err)
 	}
+	pos.Offset = consumed
+	pos.Lines = int64(lineNo)
+	pos.Size = fi.Size()
+	pos.MTime = fi.ModTime()
+	if r.nextPos == nil {
+		r.nextPos = map[string]model.IngestPos{}
+	}
+	r.nextPos[rel] = pos
 	return r.err
+}
+
+// saveStates 增量模式下把各文件新位置写回 store（全量模式为 no-op）。
+func (r *piRun) saveStates(sink Sink, states map[string]model.IngestPos) error {
+	if states == nil || len(r.nextPos) == 0 {
+		return nil
+	}
+	ts, ok := sink.(TailSink)
+	if !ok {
+		return nil
+	}
+	return ts.SaveIngestStates(piHarness, r.nextPos)
 }
 
 // ---- 记录解析结构 ---------------------------------------------------------

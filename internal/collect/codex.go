@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -82,6 +83,25 @@ func CodexSessionsDir() (string, error) {
 
 // Collect 流式扫描全部 rollout JSONL 并幂等写入事件。
 func (codexCollector) Collect(sink Sink) (Stats, error) {
+	return codexCollect(sink, nil)
+}
+
+// CollectIncremental 实现增量续读：从上次保存的 offset 起读各文件新增行。
+//
+// 首次运行（无 ingest_state）时，对已入库的历史文件从末尾起跟、对新文件从头补，
+// 保证既不重复扫历史（172 MB 文件秒级完成）也不漏采。之后每轮只读新增字节。
+func (codexCollector) CollectIncremental(sink TailSink) (int, bool, error) {
+	states, err := sink.IngestStates(codexHarness)
+	if err != nil {
+		return 0, false, err
+	}
+	stats, err := codexCollect(sink, states)
+	return stats.Inserted, true, err
+}
+
+// codexCollect 是 Collect 与 CollectIncremental 的共用实现。
+// states 为 nil 时全量扫描；非 nil 时按各文件已存 offset 增量续读。
+func codexCollect(sink Sink, states map[string]model.IngestPos) (Stats, error) {
 	stats := Stats{Harness: codexHarness}
 
 	root, err := CodexSessionsDir()
@@ -100,11 +120,14 @@ func (codexCollector) Collect(sink Sink) (Stats, error) {
 
 	r := &codexRun{sink: sink, root: root, unmapped: map[string]int{}}
 	for _, path := range files {
-		if err := r.collectFile(path); err != nil {
+		if err := r.collectFile(path, states); err != nil {
 			return stats, err
 		}
 	}
 	if err := r.flush(); err != nil {
+		return stats, err
+	}
+	if err := r.saveStates(sink, states); err != nil {
 		return stats, err
 	}
 
@@ -112,6 +135,7 @@ func (codexCollector) Collect(sink Sink) (Stats, error) {
 	stats.Inserted = r.inserted
 	stats.Skipped = r.skipped
 	stats.BadLines = r.bad
+	stats.Increment = states != nil
 	r.report(stats)
 	return stats, nil
 }
@@ -150,9 +174,10 @@ type codexRun struct {
 	skippedKnown                         int            // 已识别但按规范不出事件/无内容
 	heapPeak                             uint64         // 采集期间 HeapAlloc 峰值
 	err                                  error
+	nextPos                              map[string]model.IngestPos // 增量模式下各文件的新位置
 }
 
-func (r *codexRun) collectFile(path string) error {
+func (r *codexRun) collectFile(path string, states map[string]model.IngestPos) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -163,10 +188,21 @@ func (r *codexRun) collectFile(path string) error {
 	rel = filepath.ToSlash(rel)
 	r.files++
 
-	// 预扫：本文件是否有权威的 UserMessage（决定是否降级 response_item/message user）。
-	hasUser, err := codexFileHasUserMessage(path)
+	fi, err := os.Stat(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("stat %s: %w", rel, err)
+	}
+	start, incremental := resolveStart(rel, states, fi.Size())
+	pos := start
+
+	// 预扫：本文件是否有权威的 UserMessage（决定是否降级 response_item/message user）。
+	// 增量模式下只对从头读的文件做预扫；从中间续读时该降级决策不适用（历史已入库）。
+	hasUser := false
+	if !incremental || start.Offset == 0 {
+		hasUser, err = codexFileHasUserMessage(path)
+		if err != nil {
+			return err
+		}
 	}
 
 	f, err := os.Open(path)
@@ -180,8 +216,17 @@ func (r *codexRun) collectFile(path string) error {
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1<<20), codexScannerMaxToken)
-	lineNo := 0
+	sc.Split(splitCompleteLines)
+	lineNo := int(pos.Lines)
+	if pos.Offset > 0 {
+		if _, err := f.Seek(pos.Offset, io.SeekStart); err != nil {
+			return fmt.Errorf("seek %s: %w", rel, err)
+		}
+	}
+	// consumed 是“已完整消费的字节数”（每条完整行含其换行符）；末尾半行不计入。
+	consumed := start.Offset
 	for sc.Scan() {
+		consumed += int64(len(sc.Bytes())) + 1
 		lineNo++
 		line := bytes.TrimRight(sc.Bytes(), "\r")
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -212,7 +257,28 @@ func (r *codexRun) collectFile(path string) error {
 	if err := sc.Err(); err != nil {
 		return fmt.Errorf("读取 %s: %w", rel, err)
 	}
+	// 记录本文件新位置：offset = 已完整消费的字节数。
+	pos.Offset = consumed
+	pos.Lines = int64(lineNo)
+	pos.Size = fi.Size()
+	pos.MTime = fi.ModTime()
+	if r.nextPos == nil {
+		r.nextPos = map[string]model.IngestPos{}
+	}
+	r.nextPos[rel] = pos
 	return r.err
+}
+
+// saveStates 增量模式下把各文件新位置写回 store（全量模式为 no-op）。
+func (r *codexRun) saveStates(sink Sink, states map[string]model.IngestPos) error {
+	if states == nil || len(r.nextPos) == 0 {
+		return nil
+	}
+	ts, ok := sink.(TailSink)
+	if !ok {
+		return nil
+	}
+	return ts.SaveIngestStates(codexHarness, r.nextPos)
 }
 
 // ---- 记录解析结构 ---------------------------------------------------------

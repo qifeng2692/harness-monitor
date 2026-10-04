@@ -68,6 +68,32 @@ func HermesStateDBPath() (string, error) {
 
 // Collect 只读扫描 state.db 并幂等写入事件。
 func (hermesCollector) Collect(sink Sink) (Stats, error) {
+	return hermesCollect(sink, 0)
+}
+
+// CollectIncremental 实现增量续读：只处理 messages.id 大于水位线的新消息。
+//
+// sessions / session_model_usage 仍每轮重扫（数量小且幂等 UPSERT），保证新会话的
+// session.start 与用量变化都能跟上；messages 是内容大头，按 id 水位线增量。
+func (hermesCollector) CollectIncremental(sink TailSink) (int, bool, error) {
+	states, err := sink.IngestStates(hermesHarness)
+	if err != nil {
+		return 0, false, err
+	}
+	var since int64
+	if p, ok := states[hermesWatermarkKey]; ok {
+		since = p.Offset
+	}
+	stats, err := hermesCollect(sink, since)
+	return stats.Inserted, true, err
+}
+
+// hermesWatermarkKey 是 ingest_state 中保存 messages 已消费最大 id 的键（非文件）。
+const hermesWatermarkKey = "messages"
+
+// hermesCollect 是 Collect 与 CollectIncremental 的共用实现。
+// since==0 时全量处理 messages；否则只处理 id > since 的消息。
+func hermesCollect(sink Sink, since int64) (Stats, error) {
 	stats := Stats{Harness: hermesHarness}
 
 	path, err := HermesStateDBPath()
@@ -90,7 +116,7 @@ func (hermesCollector) Collect(sink Sink) (Stats, error) {
 	if err != nil {
 		return stats, err
 	}
-	m, bad, err := hermesMessages(db, eb)
+	m, bad, lastID, err := hermesMessages(db, eb, since)
 	stats.Scanned += m
 	stats.BadLines += bad
 	if err != nil {
@@ -105,6 +131,16 @@ func (hermesCollector) Collect(sink Sink) (Stats, error) {
 		return stats, err
 	}
 	stats.Inserted, stats.Skipped = eb.inserted, eb.skipped
+	stats.Increment = since > 0
+
+	// 增量模式下推进 messages 水位线（取本轮处理到的最大 id）。
+	if ts, ok := sink.(TailSink); ok && lastID > since {
+		if err := ts.SaveIngestStates(hermesHarness, map[string]model.IngestPos{
+			hermesWatermarkKey: {Offset: lastID},
+		}); err != nil {
+			return stats, err
+		}
+	}
 	return stats, nil
 }
 
@@ -250,14 +286,20 @@ func hermesSessions(db *sql.DB, eb *eventBuffer) (scanned int, err error) {
 
 // ---- messages -------------------------------------------------------------
 
-func hermesMessages(db *sql.DB, eb *eventBuffer) (scanned, bad int, err error) {
-	rows, err := db.Query(`
+func hermesMessages(db *sql.DB, eb *eventBuffer, since int64) (scanned, bad int, lastID int64, err error) {
+	query := `
 		SELECT id, session_id, role, content, tool_calls, tool_name,
 		       tool_call_id, timestamp, reasoning_content
-		  FROM messages
-		 ORDER BY id`)
+		  FROM messages`
+	args := []any{}
+	if since > 0 {
+		query += ` WHERE id > ?`
+		args = append(args, since)
+	}
+	query += ` ORDER BY id`
+	rows, err := db.Query(query, args...)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	defer rows.Close()
 
@@ -271,9 +313,12 @@ func hermesMessages(db *sql.DB, eb *eventBuffer) (scanned, bad int, err error) {
 		)
 		if err := rows.Scan(&id, &sessionID, &role, &content, &toolCalls,
 			&toolName, &toolCallID, &ts, &reasoning); err != nil {
-			return scanned, bad, err
+			return scanned, bad, lastID, err
 		}
 		scanned++
+		if id > lastID {
+			lastID = id
+		}
 
 		when := unixFloat(ts)
 		base := hermesHarness + ":" + strconv.FormatInt(id, 10)
@@ -289,7 +334,7 @@ func hermesMessages(db *sql.DB, eb *eventBuffer) (scanned, bad int, err error) {
 				Content:   content.String,
 				SourceKey: base,
 			}); err != nil {
-				return scanned, bad, err
+				return scanned, bad, lastID, err
 			}
 
 		case "assistant":
@@ -303,7 +348,7 @@ func hermesMessages(db *sql.DB, eb *eventBuffer) (scanned, bad int, err error) {
 					Content:   content.String,
 					SourceKey: base + ":response",
 				}); err != nil {
-					return scanned, bad, err
+					return scanned, bad, lastID, err
 				}
 			}
 			if reasoning.String != "" {
@@ -316,7 +361,7 @@ func hermesMessages(db *sql.DB, eb *eventBuffer) (scanned, bad int, err error) {
 					Content:   reasoning.String,
 					SourceKey: base + ":reasoning",
 				}); err != nil {
-					return scanned, bad, err
+					return scanned, bad, lastID, err
 				}
 			}
 			if toolCalls.String != "" {
@@ -331,7 +376,7 @@ func hermesMessages(db *sql.DB, eb *eventBuffer) (scanned, bad int, err error) {
 						"call_id":   c.id,
 					})
 					if err != nil {
-						return scanned, bad, err
+						return scanned, bad, lastID, err
 					}
 					if err := eb.add(model.Event{
 						Harness:   hermesHarness,
@@ -344,7 +389,7 @@ func hermesMessages(db *sql.DB, eb *eventBuffer) (scanned, bad int, err error) {
 						ParentID:  c.id,
 						SourceKey: base + ":call:" + c.id,
 					}); err != nil {
-						return scanned, bad, err
+						return scanned, bad, lastID, err
 					}
 				}
 			}
@@ -355,7 +400,7 @@ func hermesMessages(db *sql.DB, eb *eventBuffer) (scanned, bad int, err error) {
 				"tool_call_id": toolCallID.String,
 			})
 			if err != nil {
-				return scanned, bad, err
+				return scanned, bad, lastID, err
 			}
 			if err := eb.add(model.Event{
 				Harness:   hermesHarness,
@@ -368,14 +413,14 @@ func hermesMessages(db *sql.DB, eb *eventBuffer) (scanned, bad int, err error) {
 				ParentID:  toolCallID.String,
 				SourceKey: base,
 			}); err != nil {
-				return scanned, bad, err
+				return scanned, bad, lastID, err
 			}
 
 		default:
 			// 其他 role（如 session_meta）无内容，跳过且不计坏行。
 		}
 	}
-	return scanned, bad, rows.Err()
+	return scanned, bad, lastID, rows.Err()
 }
 
 // hermesParsedCall 是从 messages.tool_calls 中解析出的单个调用。

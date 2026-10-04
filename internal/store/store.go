@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/qf/harness-monitor/internal/model"
@@ -33,6 +34,15 @@ CREATE TABLE IF NOT EXISTS events (
 	source_key TEXT    UNIQUE
 );
 CREATE INDEX IF NOT EXISTS idx_events_hss ON events(harness, session_id, seq);
+CREATE TABLE IF NOT EXISTS ingest_state (
+	source  TEXT    NOT NULL,
+	file    TEXT    NOT NULL,
+	offset  INTEGER NOT NULL DEFAULT 0,
+	lines   INTEGER NOT NULL DEFAULT 0,
+	size    INTEGER NOT NULL DEFAULT 0,
+	mtime   TEXT    NOT NULL DEFAULT '',
+	PRIMARY KEY (source, file)
+);
 `
 
 // Store 包装一个 SQLite 连接。
@@ -238,6 +248,150 @@ type HarnessSummary struct {
 	EventCount   int64
 	SessionCount int64
 	LastTime     time.Time // 最近活动时间（会话内 MAX(time)）
+}
+
+// ---- 增量采集水位（ingest_state） -----------------------------------------
+
+// HasSession 报告某 harness 下是否已有该会话的事件。
+// 增量模式用它判断“新文件是否已入库”：已入库则从文件末尾起跟（跳过历史），
+// 未入库则从头补历史，避免漏采。
+func (s *Store) HasSession(harness, sessionID string) (bool, error) {
+	if sessionID == "" {
+		return false, nil
+	}
+	var one int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM events WHERE harness = ? AND session_id = ? LIMIT 1`,
+		harness, sessionID).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// IngestStates 返回某 source（= harness 名）下所有文件的已消费位置。
+func (s *Store) IngestStates(source string) (map[string]model.IngestPos, error) {
+	rows, err := s.db.Query(
+		`SELECT file, offset, lines, size, mtime FROM ingest_state WHERE source = ?`, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]model.IngestPos{}
+	for rows.Next() {
+		var (
+			file  string
+			pos   model.IngestPos
+			mtime string
+		)
+		if err := rows.Scan(&file, &pos.Offset, &pos.Lines, &pos.Size, &mtime); err != nil {
+			return nil, err
+		}
+		pos.MTime = parseTime(mtime)
+		out[file] = pos
+	}
+	return out, rows.Err()
+}
+
+// SaveIngestStates 幂等写入（UPSERT）一批文件的已消费位置。
+func (s *Store) SaveIngestStates(source string, states map[string]model.IngestPos) error {
+	if len(states) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`INSERT INTO ingest_state (source, file, offset, lines, size, mtime)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(source, file) DO UPDATE SET
+			offset = excluded.offset, lines = excluded.lines,
+			size = excluded.size, mtime = excluded.mtime`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for file, pos := range states {
+		if _, err := stmt.Exec(source, file, pos.Offset, pos.Lines, pos.Size, formatTime(pos.MTime)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ---- 全文搜索 -------------------------------------------------------------
+
+// SearchHit 是一条搜索命中（含会话定位信息）。
+type SearchHit struct {
+	Harness   string
+	SessionID string
+	Seq       int64
+	Time      time.Time
+	Kind      string
+	Title     string
+	Content   string // 命中事件的内容原文（列表展示时再截断）
+}
+
+// SearchEvents 对 events 表的 content/title 做子串匹配（LIKE，大小写不敏感）。
+//
+// harness 为空表示全库搜索，否则限定该 harness。limit<=0 时用默认上限。
+func (s *Store) SearchEvents(harness, query string, limit int) ([]SearchHit, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = defaultSearchLimit
+	}
+	// 转义 LIKE 通配符，让用户输入按字面匹配（大小写不敏感：SQLite LIKE 对 ASCII 本就如此）。
+	pat := "%" + escapeLike(query) + "%"
+
+	sqlText := `SELECT harness, session_id, seq, time, kind, title, content
+	              FROM events
+	             WHERE (content LIKE ? ESCAPE '\' OR title LIKE ? ESCAPE '\')`
+	args := []any{pat, pat}
+	if harness != "" {
+		sqlText += ` AND harness = ?`
+		args = append(args, harness)
+	}
+	sqlText += ` ORDER BY harness, session_id, seq LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	hits := []SearchHit{}
+	for rows.Next() {
+		var (
+			h  SearchHit
+			ts string
+		)
+		if err := rows.Scan(&h.Harness, &h.SessionID, &h.Seq, &ts, &h.Kind, &h.Title, &h.Content); err != nil {
+			return nil, err
+		}
+		h.Time = parseTime(ts)
+		hits = append(hits, h)
+	}
+	return hits, rows.Err()
+}
+
+// defaultSearchLimit 是搜索命中上限（避免超大结果集灌爆 TUI）。
+const defaultSearchLimit = 500
+
+// escapeLike 转义 LIKE 模式中的 \ % _，配合 ESCAPE '\' 使用。
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
 }
 
 func formatTime(t time.Time) string {

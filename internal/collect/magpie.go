@@ -9,8 +9,10 @@ package collect
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -49,10 +51,26 @@ func MagpieUsagePath() (string, error) {
 }
 
 // Collect 读取整个 usage.jsonl 并幂等写入事件。
-//
-// 只读源文件；每次全量扫描（文件仅 800+ 行且持续追加，全量扫描保证不漏），
-// 重复执行靠 source_key UNIQUE 去重，不产生重复事件。
 func (magpieCollector) Collect(sink Sink) (Stats, error) {
+	return magpieCollect(sink, nil)
+}
+
+// CollectIncremental 实现增量续读：从上次保存的 offset 起读新增行。
+//
+// usage.jsonl 是纯追加文件（实测 660 KB）；首次运行从 0 全读并记录位置，
+// 之后每轮只读新增字节。
+func (magpieCollector) CollectIncremental(sink TailSink) (int, bool, error) {
+	states, err := sink.IngestStates(magpieHarness)
+	if err != nil {
+		return 0, false, err
+	}
+	stats, err := magpieCollect(sink, states)
+	return stats.Inserted, true, err
+}
+
+// magpieCollect 是 Collect 与 CollectIncremental 的共用实现。
+// states 为 nil 时全量扫描；非 nil 时按已存 offset 增量续读。
+func magpieCollect(sink Sink, states map[string]model.IngestPos) (Stats, error) {
 	stats := Stats{Harness: magpieHarness}
 
 	path, err := MagpieUsagePath()
@@ -65,13 +83,28 @@ func (magpieCollector) Collect(sink Sink) (Stats, error) {
 	}
 	defer f.Close()
 
+	fi, err := f.Stat()
+	if err != nil {
+		return stats, fmt.Errorf("stat %s: %w", path, err)
+	}
+	const rel = "usage.jsonl"
+	start, _ := resolveStart(rel, states, fi.Size())
+
 	var events []model.Event
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20) // 单行上限 1 MB
-	lineNo := 0
+	sc.Split(splitCompleteLines)
+	lineNo := int(start.Lines)
+	if start.Offset > 0 {
+		if _, err := f.Seek(start.Offset, io.SeekStart); err != nil {
+			return stats, fmt.Errorf("seek %s: %w", path, err)
+		}
+	}
+	consumed := start.Offset
 	for sc.Scan() {
+		consumed += int64(len(sc.Bytes())) + 1
 		lineNo++
-		line := strings.TrimRight(sc.Text(), "\r") // 仅去行尾 CR/LF，正文一字不改
+		line := string(bytes.TrimRight(sc.Bytes(), "\r")) // 仅去行尾 CR/LF，正文一字不改
 		if strings.TrimSpace(line) == "" {
 			continue // 空行忽略，不计入扫描/坏行
 		}
@@ -89,7 +122,23 @@ func (magpieCollector) Collect(sink Sink) (Stats, error) {
 
 	inserted, skipped, err := sink.InsertEvents(events)
 	stats.Inserted, stats.Skipped = inserted, skipped
-	return stats, err
+	stats.Increment = states != nil
+	if err != nil {
+		return stats, err
+	}
+	// 记录新位置（增量模式下）。
+	if ts, ok := sink.(TailSink); ok && states != nil {
+		pos := model.IngestPos{
+			Offset: consumed,
+			Lines:  int64(lineNo),
+			Size:   fi.Size(),
+			MTime:  fi.ModTime(),
+		}
+		if err := ts.SaveIngestStates(magpieHarness, map[string]model.IngestPos{rel: pos}); err != nil {
+			return stats, err
+		}
+	}
+	return stats, nil
 }
 
 // magpieEvent 把一行 usage JSON 映射为一个 llm.usage 事件；解析失败返回 false。

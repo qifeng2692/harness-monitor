@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -70,6 +71,25 @@ func ClaudeProjectsDir() (string, error) {
 
 // Collect 流式扫描全部对话 JSONL 并幂等写入事件。
 func (claudeCollector) Collect(sink Sink) (Stats, error) {
+	return claudeCollect(sink, nil)
+}
+
+// CollectIncremental 实现增量续读：从上次保存的 offset 起读各文件新增行。
+//
+// 首次运行（无 ingest_state）时，对已入库的历史文件从末尾起跟、对新文件从头补，
+// 保证既不重复扫历史也不漏采。
+func (claudeCollector) CollectIncremental(sink TailSink) (int, bool, error) {
+	states, err := sink.IngestStates(claudeHarness)
+	if err != nil {
+		return 0, false, err
+	}
+	stats, err := claudeCollect(sink, states)
+	return stats.Inserted, true, err
+}
+
+// claudeCollect 是 Collect 与 CollectIncremental 的共用实现。
+// states 为 nil 时全量扫描；非 nil 时按各文件已存 offset 增量续读。
+func claudeCollect(sink Sink, states map[string]model.IngestPos) (Stats, error) {
 	stats := Stats{Harness: claudeHarness}
 
 	root, err := ClaudeProjectsDir()
@@ -88,11 +108,14 @@ func (claudeCollector) Collect(sink Sink) (Stats, error) {
 
 	r := &claudeRun{sink: sink, root: root, unmapped: map[string]int{}}
 	for _, p := range files {
-		if err := r.collectFile(p); err != nil {
+		if err := r.collectFile(p, states); err != nil {
 			return stats, err
 		}
 	}
 	if err := r.flush(); err != nil {
+		return stats, err
+	}
+	if err := r.saveStates(sink, states); err != nil {
 		return stats, err
 	}
 
@@ -100,6 +123,7 @@ func (claudeCollector) Collect(sink Sink) (Stats, error) {
 	stats.Inserted = r.inserted
 	stats.Skipped = r.skipped
 	stats.BadLines = r.bad
+	stats.Increment = states != nil
 	r.report()
 	return stats, nil
 }
@@ -137,6 +161,7 @@ type claudeRun struct {
 	skippedKnown                         int            // 已识别但无内容/按规范不出事件
 	unmapped                             map[string]int // 未映射顶层 type / 块类型 → 次数
 	err                                  error
+	nextPos                              map[string]model.IngestPos // 增量模式下各文件的新位置
 }
 
 // claudeFileInfo 是每文件的会话级元数据（用于 session.start）。
@@ -146,7 +171,7 @@ type claudeFileInfo struct {
 	time        time.Time
 }
 
-func (r *claudeRun) collectFile(p string) error {
+func (r *claudeRun) collectFile(p string, states map[string]model.IngestPos) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -157,25 +182,35 @@ func (r *claudeRun) collectFile(p string) error {
 	rel = filepath.ToSlash(rel)
 	r.files++
 
+	fi, err := os.Stat(p)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", rel, err)
+	}
+	start, incremental := resolveStart(rel, states, fi.Size())
+	pos := start
+
 	sid := claudeSessionID(rel)
 
-	info, err := claudeFileMeta(p)
-	if err != nil {
-		return fmt.Errorf("读取 %s: %w", rel, err)
+	// 只有从头读的文件才发 session.start（会话级事件；历史文件续读时不重复）。
+	if !incremental || start.Offset == 0 {
+		info, err := claudeFileMeta(p)
+		if err != nil {
+			return fmt.Errorf("读取 %s: %w", rel, err)
+		}
+		sidechain := false
+		if info.isSidechain != nil {
+			sidechain = *info.isSidechain
+		}
+		r.emit(model.Event{
+			Harness:   claudeHarness,
+			SessionID: sid,
+			Time:      info.time,
+			Kind:      model.KindSessionStart,
+			Title:     claudeTitle(info.cwd),
+			Meta:      claudeMeta(map[string]any{"cwd": info.cwd, "isSidechain": sidechain}),
+			SourceKey: claudeHarness + ":" + rel + ":session.start",
+		})
 	}
-	sidechain := false
-	if info.isSidechain != nil {
-		sidechain = *info.isSidechain
-	}
-	r.emit(model.Event{
-		Harness:   claudeHarness,
-		SessionID: sid,
-		Time:      info.time,
-		Kind:      model.KindSessionStart,
-		Title:     claudeTitle(info.cwd),
-		Meta:      claudeMeta(map[string]any{"cwd": info.cwd, "isSidechain": sidechain}),
-		SourceKey: claudeHarness + ":" + rel + ":session.start",
-	})
 
 	f, err := os.Open(p)
 	if err != nil {
@@ -185,8 +220,16 @@ func (r *claudeRun) collectFile(p string) error {
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), claudeScannerMaxToken)
-	lineNo := 0
+	sc.Split(splitCompleteLines)
+	lineNo := int(pos.Lines)
+	if pos.Offset > 0 {
+		if _, err := f.Seek(pos.Offset, io.SeekStart); err != nil {
+			return fmt.Errorf("seek %s: %w", rel, err)
+		}
+	}
+	consumed := start.Offset
 	for sc.Scan() {
+		consumed += int64(len(sc.Bytes())) + 1
 		lineNo++
 		line := bytes.TrimRight(sc.Bytes(), "\r")
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -204,7 +247,27 @@ func (r *claudeRun) collectFile(p string) error {
 	if err := sc.Err(); err != nil {
 		return fmt.Errorf("读取 %s: %w", rel, err)
 	}
+	pos.Offset = consumed
+	pos.Lines = int64(lineNo)
+	pos.Size = fi.Size()
+	pos.MTime = fi.ModTime()
+	if r.nextPos == nil {
+		r.nextPos = map[string]model.IngestPos{}
+	}
+	r.nextPos[rel] = pos
 	return r.err
+}
+
+// saveStates 增量模式下把各文件新位置写回 store（全量模式为 no-op）。
+func (r *claudeRun) saveStates(sink Sink, states map[string]model.IngestPos) error {
+	if states == nil || len(r.nextPos) == 0 {
+		return nil
+	}
+	ts, ok := sink.(TailSink)
+	if !ok {
+		return nil
+	}
+	return ts.SaveIngestStates(claudeHarness, r.nextPos)
 }
 
 // ---- 记录解析结构 ---------------------------------------------------------
