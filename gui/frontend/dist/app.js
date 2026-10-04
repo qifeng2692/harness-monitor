@@ -61,6 +61,7 @@ async function loadHarnesses() {
 
 async function selectHarness(name) {
   state.currentHarness = name;
+  const prevSession = state.currentSession;
   state.currentSession = null;
   state.events = [];
   renderHarnesses();
@@ -69,6 +70,13 @@ async function selectHarness(name) {
   try {
     state.sessions = await window.go.main.App.ListSessions(name);
     renderSessions();
+    // 自动选中：若之前选的会话还在本 harness 则保留；否则选第一个（最近活动），时间线立即有内容。
+    const keep = prevSession && state.sessions.some((s) => s.sessionId === prevSession);
+    if (keep) {
+      await selectSession(prevSession);
+    } else if (state.sessions.length > 0) {
+      await selectSession(state.sessions[0].sessionId);
+    }
   } catch (e) {
     setStatus("加载会话失败: " + e);
   }
