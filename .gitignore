@@ -1,0 +1,13 @@
+# binaries
+/hmd
+/hm
+*.exe
+
+# data (local event store / archives)
+/data/
+*.db
+*.db-shm
+*.db-wal
+
+# scratch
+/scratch/
