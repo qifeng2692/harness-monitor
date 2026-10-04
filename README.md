@@ -10,20 +10,9 @@ Hermes · Codex · Claude Code · pi · magpie（网关用量）
 
 ### 快速开始
 
-双击 `scripts\hm.cmd`（增量采集 + 打开 TUI），或命令行：
+双击仓库根目录的 **`harness-monitor.exe`**（自动增量采集全部 harness → 直接进入 TUI）。
 
-```bash
-hm tui                       # 打开 TUI（已装到 ~/bin，HM_DATA_DIR 已设为用户环境变量）
-```
-
-如果 `HM_DATA_DIR` 尚未生效（旧终端会话），显式指定：
-
-```bash
-HM_DATA_DIR=G:/projects/harness-monitor/data hm tui          # git-bash
-```
-```powershell
-$env:HM_DATA_DIR="G:/projects/harness-monitor/data"; hm tui  # PowerShell
-```
+也可以创建桌面快捷方式指向它（工作目录设为 `G:\projects\harness-monitor`）。
 
 ### TUI 操作（三级导航：harness → 会话 → 时间线）
 
