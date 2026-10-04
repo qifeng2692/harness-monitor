@@ -1,4 +1,0 @@
-2026-10-04 16:19:00.568  boot: exe=G:\projects\harness-monitor\bin\hm.exe cwd=G:\projects\harness-monitor args=["version"]
-2026-10-04 16:19:00.583  exit: ok
-2026-10-04 16:19:00.648  boot: exe=G:\projects\harness-monitor\bin\hm.exe cwd=G:\projects\harness-monitor args=["ls" "--harness" "magpie"]
-2026-10-04 16:19:00.677  exit: ok

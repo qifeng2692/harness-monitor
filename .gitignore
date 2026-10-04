@@ -11,3 +11,7 @@
 
 # scratch
 /scratch/
+
+# boot logs (runtime artifacts)
+hm-boot.log
+bin/hm-boot.log
