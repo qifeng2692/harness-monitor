@@ -80,7 +80,10 @@ func Open() (*Store, error) {
 
 // OpenPath 打开指定路径的数据库（测试/覆盖用）。
 func OpenPath(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	// busy_timeout：多进程并发访问时等待锁而不是立刻报错（双击可能多开实例）。
+	// journal_mode(WAL)：读写并发不互斥。
+	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库 %s: %w", path, err)
 	}

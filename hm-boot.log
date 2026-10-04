@@ -1,0 +1,5 @@
+2026-10-04 16:19:01.047  boot: exe=G:\projects\harness-monitor\harness-monitor.exe cwd=C:\Windows\system32 args=[]
+2026-10-04 16:19:01.056  stage: store.Open
+2026-10-04 16:19:01.062  stage: store.Open ok (db=G:\projects\harness-monitor\data\hm.db)
+2026-10-04 16:19:01.169  stage: collect done (194 new)
+2026-10-04 16:19:01.174  stage: tui.Run
