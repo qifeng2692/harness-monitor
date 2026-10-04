@@ -15,3 +15,7 @@
 # boot logs (runtime artifacts)
 hm-boot.log
 bin/hm-boot.log
+
+# GUI build output
+gui/build/bin/
+gui/data/

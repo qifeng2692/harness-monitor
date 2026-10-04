@@ -54,7 +54,8 @@ type Store struct {
 // DataDir 返回数据目录，解析顺序：
 //  1. HM_DATA_DIR 环境变量（若设置）；
 //  2. exe 所在目录旁的 data/（若其中已有 hm.db——双击 exe 场景的锚点）；
-//  3. ./data（开发场景：cwd 即仓库根）。
+//  3. 从 exe 所在目录向上逐级查找含 data/hm.db 的目录（GUI 在 build/bin/ 深层目录时命中仓库根）；
+//  4. ./data（开发场景：cwd 即仓库根）。
 func DataDir() string {
 	if d := os.Getenv("HM_DATA_DIR"); d != "" {
 		return d
@@ -63,6 +64,18 @@ func DataDir() string {
 		dir := filepath.Join(filepath.Dir(exe), "data")
 		if _, err := os.Stat(filepath.Join(dir, "hm.db")); err == nil {
 			return dir
+		}
+		// 向上查找（最多 4 级）：gui/build/bin/ → gui/build → gui → 仓库根
+		up := filepath.Dir(exe)
+		for i := 0; i < 4; i++ {
+			up = filepath.Dir(up)
+			if up == filepath.Dir(up) { // 到达盘符根
+				break
+			}
+			dir := filepath.Join(up, "data")
+			if _, err := os.Stat(filepath.Join(dir, "hm.db")); err == nil {
+				return dir
+			}
 		}
 	}
 	return defaultDataDir

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>harness-monitor</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部工具栏 -->
+    <header class="toolbar">
+      <div class="brand">
+        <span class="logo">◉</span>
+        <span class="title">harness-monitor</span>
+      </div>
+      <div class="search-box">
+        <input id="searchInput" type="text" placeholder="搜索所有内容原文…（回车搜索）" />
+        <label class="scope"><input type="checkbox" id="scopeCurrent" /> 仅当前 harness</label>
+      </div>
+      <div class="actions">
+        <button id="btnCollect" class="btn primary" title="增量采集全部 harness">⟳ 采集</button>
+        <button id="btnRefresh" class="btn" title="重新加载数据">刷新</button>
+        <button id="btnAbout" class="btn" title="关于">?</button>
+      </div>
+    </header>
+
+    <!-- 主区域：三级导航 -->
+    <main class="layout">
+      <!-- 第一级：harness -->
+      <aside class="pane pane-harness">
+        <div class="pane-title">HARNESS</div>
+        <ul id="harnessList" class="list"></ul>
+      </aside>
+
+      <!-- 第二级：会话 -->
+      <aside class="pane pane-session">
+        <div class="pane-title" id="sessionPaneTitle">会话</div>
+        <div class="pane-sub">
+          <input id="sessionFilter" type="text" placeholder="过滤会话…" />
+        </div>
+        <ul id="sessionList" class="list"></ul>
+      </aside>
+
+      <!-- 第三级：时间线 -->
+      <section class="pane pane-timeline">
+        <div class="pane-title timeline-head">
+          <span id="timelineTitle">时间线</span>
+          <span class="timeline-actions">
+            <button id="btnLive" class="btn small" title="每 3 秒增量采集并刷新">● LIVE</button>
+            <button id="btnReplay" class="btn small" title="回放模式：逐步查看">▶ 回放</button>
+            <label class="filter-kinds" title="按类型过滤">
+              <select id="kindFilter">
+                <option value="">全部类型</option>
+                <option value="turn.start">用户输入</option>
+                <option value="llm.reasoning">推理</option>
+                <option value="llm.response">模型输出</option>
+                <option value="tool.call">工具调用</option>
+                <option value="tool.result">工具结果</option>
+                <option value="llm.usage">用量</option>
+                <option value="session.start">会话</option>
+                <option value="turn.end">轮次结束</option>
+                <option value="compaction">压缩</option>
+                <option value="error">错误</option>
+              </select>
+            </label>
+          </span>
+        </div>
+        <div id="timeline" class="timeline"></div>
+      </section>
+    </main>
+
+    <!-- 搜索面板（覆盖层） -->
+    <div id="searchPanel" class="overlay hidden">
+      <div class="overlay-box">
+        <div class="overlay-head">
+          <span id="searchTitle">搜索结果</span>
+          <button id="btnCloseSearch" class="btn small">✕ 关闭</button>
+        </div>
+        <ul id="searchResults" class="list search-results"></ul>
+      </div>
+    </div>
+
+    <!-- 关于面板 -->
+    <div id="aboutPanel" class="overlay hidden">
+      <div class="overlay-box about-box">
+        <div class="overlay-head">
+          <span>关于 harness-monitor</span>
+          <button id="btnCloseAbout" class="btn small">✕ 关闭</button>
+        </div>
+        <div class="about-body">
+          <p>采集本机各 AI harness（Hermes / Codex / Claude Code / pi / magpie）的步骤级事件，按 harness → 会话 → 时间线三级导航查看每一步的完整内容（用户输入 / 推理 / 工具参数 / 工具结果）。</p>
+          <p class="dim" id="aboutVersion"></p>
+          <p class="dim">数据目录：<span id="aboutDataDir"></span></p>
+          <button id="btnOpenData" class="btn">在资源管理器中打开数据目录</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 状态栏 -->
+    <footer class="statusbar">
+      <span id="statusText">就绪</span>
+      <span id="liveIndicator" class="hidden">● LIVE</span>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
