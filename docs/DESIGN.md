@@ -97,14 +97,22 @@ type Event struct {
 ## 里程碑（M1，看板链）
 
 - [x] 仓库 + 设计文档 + 数据格式调研
-- [ ] M1-1 骨架：Go module + CLI/TUI 壳 + SQLite 事件库
-- [ ] M1-2 magpie 采集器（usage.jsonl → 事件）
-- [ ] M1-3 Hermes 采集器（state.db → 事件，内容级）
-- [ ] M1-4 Codex 采集器（rollout JSONL 流式解析）
-- [ ] M1-5 Claude Code 采集器（projects JSONL）
-- [ ] M1-6 pi 采集器（sessions JSONL）
-- [ ] M1-7 TUI 三级导航 + 步骤内容展开
-- [ ] M1-8 live 跟随 + replay 回放 + 搜索
+- [x] M1-1 骨架：Go module + CLI/TUI 壳 + SQLite 事件库
+- [x] M1-2 magpie 采集器（usage.jsonl → 事件）
+- [x] M1-3 Hermes 采集器（state.db → 事件，内容级）
+- [x] M1-4 Codex 采集器（rollout JSONL 流式解析）
+- [x] M1-5 Claude Code 采集器（projects JSONL）
+- [x] M1-6 pi 采集器（sessions JSONL）
+- [x] M1-7 TUI 三级导航 + 步骤内容展开
+- [x] M1-8 live 跟随 + replay 回放 + 搜索（+ ingest_state 增量续读）
+
+## M1 验收结果（2026-10-04）
+
+- 事件总量：151,649（hermes 45,495 / codex 51,068 / pi 53,381 / magpie 1,503 / claude 202）
+- 独立会话：587 个；重复 source_key：0
+- 内容级验证：推理最大 99.9KB、工具结果最大 292KB、工具参数最大 79.9KB 全文入库
+- 数据完整性：codex 86/86 会话、pi 190/190 真实会话全覆盖（obs_ ledger 与共享 session_id 已甄别）
+- 测试：`go test ./...` 全过；`go vet` 通过
 
 ## 验证方式
 
