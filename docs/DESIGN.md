@@ -106,6 +106,29 @@ type Event struct {
 - [x] M1-7 TUI 三级导航 + 步骤内容展开
 - [x] M1-8 live 跟随 + replay 回放 + 搜索（+ ingest_state 增量续读）
 
+## 双击启动与安全软件（2026-10-04 实测）
+
+**现象**：双击 exe（或桌面快捷方式）无任何反应；从终端/`Start-Process` 启动同一 exe 完全正常。
+
+**根因**：本机运行火绒（Huorong，进程 `HipsDaemon`）。带 `cobra.Execute()` 的二进制在 **explorer 双击启动**环境下会被火绒静默终止（进程启动 2-3 秒后消失；无错误输出、无 WER 记录、无崩溃转储；`Start-Process` / 终端启动不受影响）。对照实验（2026-10-04）：
+
+| 实验 | 结果 |
+|---|---|
+| 平凡 Go 程序（explorer 启动） | 正常存活 |
+| cobra 程序，`Execute()` 被调用（explorer 启动） | **2-3 秒后被静默杀死**（改名/换目录/换 cobra 版本 v1.8.1 均复现） |
+| cobra 导入但不调用 `Execute()` | 正常存活 |
+| 手写解析器（无 cobra，含完整主逻辑） | 正常存活 |
+
+**修复**：`cmd/hm/main.go` 改为手写子命令解析（不用 cobra，见文件头注释）。修复后 explorer/快捷方式双击稳定。
+
+**防护措施**（保留在代码里，用于未来排查同类问题）：
+- `hm-boot.log`（exe 同目录）：记录每次启动的阶段（boot → store.Open → collect → tui.Run → exit），双击出问题时看这个文件；
+- panic 捕获：崩溃堆栈写入启动日志；
+- `pauseOnError`：双击启动（无参数）出错时窗口暂停显示错误，不再一闪而过；
+- SQLite `busy_timeout=10000` + WAL：多实例并发打开不冲突。
+
+**教训**：本机（火绒环境）新增 CLI 工具不要引入 cobra；如需框架，先做 explorer 双击启动的存活测试再定。
+
 ## M1 验收结果（2026-10-04）
 
 - 事件总量：151,649（hermes 45,495 / codex 51,068 / pi 53,381 / magpie 1,503 / claude 202）
