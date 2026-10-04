@@ -48,6 +48,10 @@
   - `event_msg/token_count`：`info.total_token_usage{input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens}` + `last_token_usage`
   - `event_msg/item_completed`：含 `item{type: UserMessage|...}`、`started_at_ms/completed_at_ms`
 - 工具名实测分布（单会话）：`exec_command` 3311、`js` 227、`view_image` 53、`write_stdin` 37。
+- **用户输入的两个载体**（实测均有，采集器两处都要处理）：
+  - `event_msg/item_completed` 的 `item.type == "UserMessage"`：`content[0].text` = 用户真实输入（纯文本，如 `"我希望这个 项目适配于PC和移动端…"`）；
+  - `response_item/message` `role=="user"`：可能混入 `<INSTRUCTIONS>` 等系统注入内容（如 AGENTS.md 全文）——**作为用户输入要标记或过滤**，不能直接当作对话内容展示。
+  - 建议：以 `item_completed/UserMessage` 为 `turn.start` 的权威来源；`response_item/message user` 仅在无对应 item 时降级使用。
 
 ### 2.2 官方扩展点（后续任务用）
 - Hooks（官方文档 developers.openai.com/codex/hooks）：`SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SessionEnd, SubagentStart/Stop, PreCompact/PostCompact, PermissionRequest` 等 12 类。
@@ -82,8 +86,10 @@
 - `message` 记录：`{type: "message", id, parentId, timestamp, message: {...}}`
   - `message.role`: `system | user | assistant | toolResult`
   - user 消息：`content: [{type: "text", text: "..."}]`，带 `timestamp`（毫秒）
-  - assistant 消息：`content: [{type: "thinking", thinking: "..."}, {type: "text", text: "..."}, ...]`
+  - assistant 消息：`content: [{type: "thinking", thinking: "..."}, {type: "text", text: "..."}, {type: "toolCall", id: "call_00_...", name: "bash", arguments: {...}}, ...]`
+    - **工具调用块实测结构**：`{"type": "toolCall", "id": "call_00_TmCdkNJCJfeZrAhNgfQ29594", "name": "bash", "arguments": {"command": "cd /g/powershell && ls -la ..."}}` —— `arguments` 是**已解析的对象**（不是字符串）
   - toolResult 消息：`{role: "toolResult", toolCallId: "call_00_...", toolName: "bash", content: [{type: "text", text: "完整输出"}]}`
+  - 消息比例实测（单会话前 3000 行）：user 13 / assistant 1443 / toolResult 1453 —— 工具循环是主体
 - `compaction` 记录：上下文压缩事件（92 条实测于大文件）——可观测上下文管理。
 
 ### 4.2 官方扩展点（后续任务用）
