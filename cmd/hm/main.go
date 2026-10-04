@@ -33,6 +33,15 @@ func newRootCmd() *cobra.Command {
 		Long:          "harness-monitor 采集本机各 AI harness（Hermes / Codex / Claude Code / pi / magpie）的步骤级事件，\n存入 SQLite 事件库，并以 TUI 按 harness → 会话 → 时间线三级导航查看。",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// 无子命令时直接进入 TUI（`go run ./cmd/hm` 即首屏）。
+		RunE: func(_ *cobra.Command, _ []string) error {
+			s, err := store.Open()
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+			return tui.Run(s)
+		},
 	}
 	root.AddCommand(newCollectCmd())
 	root.AddCommand(newLsCmd())

@@ -207,10 +207,10 @@ func (s *Store) ListEvents(harness, sessionID string) ([]model.Event, error) {
 	return events, rows.Err()
 }
 
-// Harnesses 返回库中出现过的 harness 列表及其事件数（TUI 汇总用）。
+// Harnesses 返回库中出现过的 harness 列表及其汇总（TUI 首屏用）。
 func (s *Store) Harnesses() ([]HarnessSummary, error) {
 	rows, err := s.db.Query(`
-		SELECT harness, COUNT(*), COUNT(DISTINCT session_id)
+		SELECT harness, COUNT(*), COUNT(DISTINCT session_id), MAX(time)
 		  FROM events GROUP BY harness ORDER BY harness`)
 	if err != nil {
 		return nil, err
@@ -219,10 +219,14 @@ func (s *Store) Harnesses() ([]HarnessSummary, error) {
 
 	out := []HarnessSummary{}
 	for rows.Next() {
-		var h HarnessSummary
-		if err := rows.Scan(&h.Harness, &h.EventCount, &h.SessionCount); err != nil {
+		var (
+			h    HarnessSummary
+			last string
+		)
+		if err := rows.Scan(&h.Harness, &h.EventCount, &h.SessionCount, &last); err != nil {
 			return nil, err
 		}
+		h.LastTime = parseTime(last)
 		out = append(out, h)
 	}
 	return out, rows.Err()
@@ -233,6 +237,7 @@ type HarnessSummary struct {
 	Harness      string
 	EventCount   int64
 	SessionCount int64
+	LastTime     time.Time // 最近活动时间（会话内 MAX(time)）
 }
 
 func formatTime(t time.Time) string {
