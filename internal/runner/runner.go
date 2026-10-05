@@ -76,10 +76,56 @@ type Spec struct {
 func (s Spec) Command() *exec.Cmd {
 	cmd := exec.Command(s.Path, s.Args...)
 	cmd.Dir = s.Dir
+	cmd.Env = sanitizedEnv()
 	if s.UseStdin {
 		cmd.Stdin = strings.NewReader(s.Prompt)
 	}
 	return cmd
+}
+
+// sanitizedEnv 返回子进程环境：继承当前进程环境，但保证 NO_PROXY / no_proxy
+// 包含回环地址（127.0.0.1、localhost）。
+//
+// 原因（2026-10-05 实测）：若上层环境设置了 HTTP_PROXY/HTTPS_PROXY（如 Clash
+// 127.0.0.1:7890），而 NO_PROXY 未含回环地址，harness 对本地 magpie 网关
+// （http://127.0.0.1:3425）的请求会被转发给代理，代理对回环地址返回 502 ——
+// 表现为「网关故障」，实为环境变量污染。GUI 从带代理变量的终端启动时，
+// 所有子 harness 都会中招；从 explorer 启动则无此问题（无代理变量）。
+// 合并 NO_PROXY 是最小修复：既保留代理对其余流量的作用，又让回环直连。
+//
+// 实现：丢弃环境块中所有 NO_PROXY/no_proxy 条目，合并其值后统一追加
+// 大小写两个键（Windows 大小写不敏感、Linux 两者独立，两个键值相同最稳）。
+func sanitizedEnv() []string {
+	env := os.Environ()
+	const loopback = "127.0.0.1,localhost"
+	var merged string
+	out := make([]string, 0, len(env)+2)
+	for _, kv := range env {
+		key, val, ok := strings.Cut(kv, "=")
+		if ok && strings.EqualFold(key, "NO_PROXY") {
+			merged = mergeNoProxy(merged, val)
+			continue
+		}
+		out = append(out, kv)
+	}
+	merged = mergeNoProxy(merged, loopback)
+	out = append(out, "NO_PROXY="+merged, "no_proxy="+merged)
+	return out
+}
+
+// mergeNoProxy 把 want 合并进现有 NO_PROXY 值（逗号分隔，去重）。
+func mergeNoProxy(existing, want string) string {
+	seen := map[string]bool{}
+	var parts []string
+	for _, v := range strings.Split(existing+","+want, ",") {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		parts = append(parts, v)
+	}
+	return strings.Join(parts, ",")
 }
 
 // binOverrideEnv 返回某家 harness 的可执行文件覆盖环境变量名（如 HM_HARNESS_BIN_CODEX）。

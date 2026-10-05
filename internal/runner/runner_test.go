@@ -369,3 +369,68 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// TestSanitizedEnvAddsNoProxy 验证代理环境净化：无论 NO_PROXY 原值如何，
+// 子进程环境必须包含回环地址（修复 502 环境变量污染）。
+//
+// 注意：Windows 环境变量大小写不敏感（os.Setenv/Unsetenv 两个键互相影响），
+// 因此每个子用例先统一清空两个键，再按需设置。
+func TestSanitizedEnvAddsNoProxy(t *testing.T) {
+	cases := []struct {
+		name      string
+		noProxy   string // 初始 NO_PROXY 值（空串=未设置）
+		httpProxy string
+	}{
+		{"无 NO_PROXY 时追加", "", "http://127.0.0.1:7890"},
+		{"已有 NO_PROXY 时合并", "example.com", "http://127.0.0.1:7890"},
+		{"小写 no_proxy 也合并", "foo.local", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// 统一清空（两个键都清，规避 Windows 大小写不敏感）
+			os.Unsetenv("NO_PROXY")
+			os.Unsetenv("no_proxy")
+			os.Unsetenv("HTTP_PROXY")
+			if tc.noProxy != "" {
+				os.Setenv("NO_PROXY", tc.noProxy)
+			}
+			if tc.httpProxy != "" {
+				os.Setenv("HTTP_PROXY", tc.httpProxy)
+			}
+			defer func() {
+				os.Unsetenv("NO_PROXY")
+				os.Unsetenv("no_proxy")
+				os.Unsetenv("HTTP_PROXY")
+			}()
+
+			env := sanitizedEnv()
+			joined := strings.Join(env, "\n")
+			if !strings.Contains(joined, "127.0.0.1") {
+				t.Errorf("sanitizedEnv 未包含 127.0.0.1:\n%s", joined)
+			}
+			if !strings.Contains(joined, "localhost") {
+				t.Errorf("sanitizedEnv 未包含 localhost:\n%s", joined)
+			}
+			// 原有 NO_PROXY 条目保留
+			if tc.noProxy != "" && !strings.Contains(joined, tc.noProxy) {
+				t.Errorf("原 NO_PROXY 条目 %q 丢失:\n%s", tc.noProxy, joined)
+			}
+			// 代理变量保留
+			if tc.httpProxy != "" && !strings.Contains(joined, tc.httpProxy) {
+				t.Errorf("HTTP_PROXY 丢失")
+			}
+		})
+	}
+}
+
+// TestMergeNoProxy 验证合并去重。
+func TestMergeNoProxy(t *testing.T) {
+	got := mergeNoProxy("a.com, 127.0.0.1", "127.0.0.1,localhost")
+	if got != "a.com,127.0.0.1,localhost" {
+		t.Errorf("mergeNoProxy = %q", got)
+	}
+	got = mergeNoProxy("", "127.0.0.1,localhost")
+	if got != "127.0.0.1,localhost" {
+		t.Errorf("mergeNoProxy empty = %q", got)
+	}
+}
