@@ -18,6 +18,7 @@ const state = {
   replayIndex: 0,
   expanded: new Set(), // 已展开步骤的 seq
   searchQuery: "",
+  view: "monitor", // monitor | compare
 };
 
 // ---- 工具 ----
@@ -164,21 +165,28 @@ function renderTimeline() {
     box.innerHTML = `<div class="timeline-empty">无匹配步骤</div>`;
     return;
   }
+  const ctx = {
+    events: state.events,
+    explains: state.explains,
+    expanded: state.expanded,
+  };
   for (const e of filtered) {
-    box.appendChild(renderStep(e));
+    box.appendChild(renderStep(e, ctx));
   }
   if (state.replay) highlightReplay();
 }
 
-function renderStep(e) {
+// renderStep 渲染一个步骤卡片。ctx = {events, explains, expanded}——主监控与对比实验台
+// 共用同一套样式与交互（展开/收起），只是各自持有独立的事件流与展开集合。
+function renderStep(e, ctx) {
   const div = document.createElement("div");
-  const isExpanded = state.expanded.has(e.seq);
+  const isExpanded = ctx.expanded.has(e.seq);
   div.className = "step" + (isExpanded ? " expanded" : "");
   div.dataset.seq = e.seq;
 
   const preview = oneLine(e.content);
   const label = KIND_LABEL[e.kind] || e.kind;
-  const idx = state.events.findIndex((x) => x.seq === e.seq);
+  const idx = ctx.events.findIndex((x) => x.seq === e.seq);
 
   div.innerHTML = `
     <div class="step-left">
@@ -188,23 +196,23 @@ function renderStep(e) {
     <div class="step-body">
       <div class="step-title">${esc(e.title || label)}</div>
       ${!isExpanded && preview ? `<div class="step-preview">${esc(preview)}</div>` : ""}
-      ${isExpanded ? renderExpanded(e, idx) : ""}
+      ${isExpanded ? renderExpanded(e, idx, ctx) : ""}
     </div>`;
 
   div.onclick = (ev) => {
     if (ev.target.closest(".step-content") || ev.target.closest(".step-explain")) return; // 内容区滚动不收起
-    if (state.expanded.has(e.seq)) state.expanded.delete(e.seq);
-    else state.expanded.add(e.seq);
-    div.replaceWith(renderStep(e));
+    if (ctx.expanded.has(e.seq)) ctx.expanded.delete(e.seq);
+    else ctx.expanded.add(e.seq);
+    div.replaceWith(renderStep(e, ctx));
   };
   return div;
 }
 
-function renderExpanded(e, idx) {
+function renderExpanded(e, idx, ctx) {
   const contentLen = (e.content || "").length;
   let html = "";
   // 自然语言说明（用户需求：每一步讲清楚衔接关系）
-  const ex = state.explains[idx];
+  const ex = ctx.explains[idx];
   if (ex) {
     html += `<div class="step-explain">
       <div class="explain-row"><span class="explain-label">这一步</span><span>${esc(ex.summary)}</span></div>
@@ -371,6 +379,323 @@ function replayStep(delta) {
   highlightReplay();
 }
 
+// ---- 视图切换 ----
+// 两个视图都是 show/hide（不引入路由）。切到对比实验台时刷新历史批次。
+function switchView(v) {
+  state.view = v;
+  $("monitorView").classList.toggle("hidden", v !== "monitor");
+  $("compareView").classList.toggle("hidden", v !== "compare");
+  $("btnViewMonitor").classList.toggle("active", v === "monitor");
+  $("btnViewCompare").classList.toggle("active", v === "compare");
+  if (v === "compare") {
+    loadRuns();
+  } else {
+    stopComparePoll();
+  }
+}
+
+// ============================================================================
+// 对比实验台
+// ============================================================================
+
+// 四家 harness 的规范顺序与展示名（与 internal/runner.All 一致）。
+const COMPARE_HARNESSES = [
+  { name: "hermes", label: "Hermes" },
+  { name: "codex", label: "Codex" },
+  { name: "claude", label: "Claude Code" },
+  { name: "pi", label: "pi" },
+];
+
+const STATUS_LABEL = {
+  pending: "等待中",
+  running: "运行中",
+  done: "完成",
+  failed: "失败",
+  timeout: "超时",
+  stopped: "已停止",
+};
+
+// compare 是对比实验台的视图状态（与主监控 state 分离）。
+const compare = {
+  runID: null,        // 当前查看的批次 id
+  detail: null,       // GetRun 结果
+  runs: [],           // ListRuns 结果
+  cols: {},           // harness -> { events, explains, expanded:Set }
+  timer: null,        // 兜底轮询定时器（运行中批次）
+  pendingReload: false,
+};
+
+function initCompareHarnesses() {
+  const box = $("compareHarnesses");
+  box.innerHTML = "";
+  for (const h of COMPARE_HARNESSES) {
+    const id = "chk-" + h.name;
+    const label = document.createElement("label");
+    label.className = "compare-harness";
+    label.innerHTML = `<input type="checkbox" id="${id}" value="${h.name}" checked /> ${esc(h.label)}`;
+    box.appendChild(label);
+  }
+}
+
+function selectedHarnesses() {
+  return COMPARE_HARNESSES
+    .map((h) => h.name)
+    .filter((n) => $(`chk-${n}`) && $(`chk-${n}`).checked);
+}
+
+// startCompare 启动一次对比：创建批次后立即返回 runID，之后靠事件 + 轮询拉增量。
+async function startCompare() {
+  const prompt = $("comparePrompt").value.trim();
+  const harnesses = selectedHarnesses();
+  if (!prompt) { setStatus("请输入要对比的问题"); return; }
+  if (harnesses.length === 0) { setStatus("至少勾选一家 harness"); return; }
+
+  $("btnStartCompare").disabled = true;
+  setStatus("启动对比…");
+  try {
+    const runID = await window.go.main.App.StartCompare(prompt, harnesses);
+    compare.runID = runID;
+    compare.detail = null;
+    compare.cols = {};
+    setStatus(`批次 #${runID} 已启动（${harnesses.join(" / ")}）`);
+    await loadRuns(runID);
+    await loadRun(runID);
+    startComparePoll();
+  } catch (e) {
+    setStatus("启动失败: " + e);
+  } finally {
+    $("btnStartCompare").disabled = false;
+  }
+}
+
+async function stopRun() {
+  if (compare.runID == null) return;
+  $("btnStopRun").disabled = true;
+  setStatus("停止中…");
+  try {
+    await window.go.main.App.StopRun(compare.runID);
+    setStatus(`批次 #${compare.runID} 已请求停止`);
+    await loadRun(compare.runID);
+    await loadRuns(compare.runID);
+  } catch (e) {
+    setStatus("停止失败: " + e);
+  }
+}
+
+// loadRuns 拉历史批次列表（倒序），填 select；keepID 指定要选中的批次。
+async function loadRuns(keepID) {
+  try {
+    compare.runs = await window.go.main.App.ListRuns();
+  } catch (e) {
+    setStatus("加载批次失败: " + e);
+    return;
+  }
+  const sel = $("runSelect");
+  sel.innerHTML = "";
+  if (compare.runs.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "（暂无批次）";
+    sel.appendChild(opt);
+    return;
+  }
+  for (const r of compare.runs) {
+    const opt = document.createElement("option");
+    opt.value = String(r.id);
+    const st = r.status === "running" ? "运行中" : "已完成";
+    opt.textContent = `#${r.id} · ${st} · ${(r.createdAt || "").slice(5, 16)} · ${truncate(r.prompt, 34)}`;
+    sel.appendChild(opt);
+  }
+  const want = keepID != null ? keepID : compare.runID;
+  if (want != null && compare.runs.some((r) => r.id === want)) {
+    sel.value = String(want);
+  } else {
+    sel.value = String(compare.runs[0].id);
+  }
+}
+
+// loadRun 拉批次详情 + 各家事件流，重建并列列区。
+async function loadRun(runID) {
+  if (runID == null) return;
+  compare.runID = runID;
+  let detail;
+  try {
+    detail = await window.go.main.App.GetRun(runID);
+  } catch (e) {
+    setStatus("加载批次详情失败: " + e);
+    return;
+  }
+  compare.detail = detail;
+
+  // 保留已展开步骤（刷新时不打断阅读）。
+  const prevCols = compare.cols;
+  compare.cols = {};
+  for (const r of detail.runners || []) {
+    const prev = prevCols[r.harness];
+    compare.cols[r.harness] = {
+      events: prev ? prev.events : [],
+      explains: prev ? prev.explains : [],
+      expanded: prev ? prev.expanded : new Set(),
+    };
+  }
+
+  // 并发拉四家事件流（只拉状态非 pending 的——pending 还没有事件）。
+  await Promise.all((detail.runners || []).map(async (r) => {
+    if (r.status === "pending") return;
+    try {
+      const [events, explains] = await Promise.all([
+        window.go.main.App.GetRunEvents(runID, r.harness),
+        window.go.main.App.ExplainRunEvents(runID, r.harness).catch(() => []),
+      ]);
+      compare.cols[r.harness].events = events;
+      compare.cols[r.harness].explains = explains;
+    } catch (_) { /* 单家失败不阻塞其余列 */ }
+  }));
+
+  renderCompareColumns();
+  $("runMeta").textContent =
+    `批次 #${detail.id} · ${detail.status === "running" ? "运行中" : "已完成"} · ${(detail.createdAt || "").slice(0, 19)}`;
+  $("btnStopRun").disabled = !detail.active;
+}
+
+function renderCompareColumns() {
+  const box = $("compareColumns");
+  const d = compare.detail;
+  box.innerHTML = "";
+  if (!d) {
+    box.innerHTML = `<div class="compare-empty">选择四家 harness，输入问题，点击「开始对比」——四列会并行实时更新</div>`;
+    return;
+  }
+  const runners = d.runners || [];
+  if (runners.length === 0) {
+    box.innerHTML = `<div class="compare-empty">该批次没有 harness 记录</div>`;
+    return;
+  }
+  for (const r of runners) {
+    box.appendChild(renderCompareColumn(r));
+  }
+}
+
+// renderCompareColumn 渲染一列：列头（名 + 状态徽标 + 耗时 + tokens）→ 步骤卡片 → 最终回答。
+function renderCompareColumn(r) {
+  const col = document.createElement("div");
+  col.className = "compare-col status-" + (r.status || "pending");
+
+  const st = STATUS_LABEL[r.status] || r.status || "未知";
+  const dur = r.durationMs > 0 ? (r.durationMs / 1000).toFixed(1) + "s" : "—";
+  const tok = (r.tokensIn || r.tokensOut)
+    ? `${fmtNum(r.tokensIn)}/${fmtNum(r.tokensOut)}`
+    : "—";
+  const cost = r.costUsd > 0 ? `$${r.costUsd.toFixed(4)}` : "";
+
+  const head = document.createElement("div");
+  head.className = "compare-col-head";
+  head.innerHTML = `
+    <div class="compare-col-title">
+      <span class="compare-col-name">${esc(r.harness)}</span>
+      <span class="compare-badge status-${esc(r.status)}">${esc(st)}</span>
+    </div>
+    <div class="compare-col-stats">
+      <span title="耗时">⏱ ${esc(dur)}</span>
+      <span title="tokens 输入/输出">⇅ ${esc(tok)}</span>
+      ${cost ? `<span title="费用">${esc(cost)}</span>` : ""}
+    </div>
+    ${r.sessionId ? `<div class="compare-col-session"><a href="#" class="session-link">会话 ${esc(truncate(r.sessionId, 18))} ↗</a></div>` : ""}`;
+  col.appendChild(head);
+
+  const link = head.querySelector(".session-link");
+  if (link) {
+    link.onclick = (ev) => {
+      ev.preventDefault();
+      jumpToSession(r.harness, r.sessionId);
+    };
+  }
+
+  // 步骤列表
+  const body = document.createElement("div");
+  body.className = "compare-col-body";
+  const c = compare.cols[r.harness];
+  const events = c ? c.events : [];
+  if (events.length === 0) {
+    body.innerHTML = `<div class="compare-col-empty">${r.status === "pending" ? "等待启动…" : "暂无步骤"}</div>`;
+  } else {
+    const ctx = { events, explains: c.explains, expanded: c.expanded };
+    for (const e of events) {
+      body.appendChild(renderStep(e, ctx));
+    }
+  }
+  col.appendChild(body);
+
+  // 最终回答 / 状态说明。注意：error 事件（如 codex 的「忽略未知配置项」告警）不等于失败，
+  // 只有 status 才是判据——所以这里按 status 决定标题，不按 error 文本是否存在。
+  const foot = document.createElement("div");
+  foot.className = "compare-col-foot";
+  if (r.finalText) {
+    foot.innerHTML = `<div class="compare-final-label">最终回答</div>
+      <div class="compare-final-text">${esc(r.finalText)}</div>`;
+  } else if (r.error) {
+    const lbl = r.status === "stopped" ? "已停止"
+      : r.status === "timeout" ? "超时"
+      : r.status === "failed" ? "失败原因" : "说明";
+    foot.innerHTML = `<div class="compare-final-label">${esc(lbl)}</div>
+      <div class="${r.status === "failed" ? "compare-final-error" : "compare-final-note"}">${esc(r.error)}</div>`;
+  } else {
+    foot.innerHTML = `<div class="compare-col-empty dim">${
+      r.status === "running" ? "运行中…" : r.status === "pending" ? "等待启动…" : "无最终回答"}</div>`;
+  }
+  col.appendChild(foot);
+
+  return col;
+}
+
+// jumpToSession 点击会话链接 → 切回主监控视图并选中该会话（会话不在主库时提示）。
+async function jumpToSession(harness, sessionId) {
+  switchView("monitor");
+  try {
+    await selectHarness(harness);
+    if (state.sessions.some((s) => s.sessionId === sessionId)) {
+      await selectSession(sessionId);
+    } else {
+      setStatus(`会话 ${sessionId} 尚未采集到主监控库（对比批次的事件只存在批次里）`);
+    }
+  } catch (e) {
+    setStatus("跳转失败: " + e);
+  }
+}
+
+// startComparePoll 运行中批次的兜底刷新：事件推送 + 每 2 秒轮询（事件可能丢，轮询保底）。
+function startComparePoll() {
+  stopComparePoll();
+  compare.timer = setInterval(async () => {
+    if (compare.runID == null) return;
+    if (compare.pendingReload) return; // 上一轮还没回来
+    compare.pendingReload = true;
+    try {
+      await loadRun(compare.runID);
+      await loadRuns(compare.runID);
+      if (compare.detail && !compare.detail.active) stopComparePoll(); // 全部终态 → 停轮询
+    } catch (_) {
+    } finally {
+      compare.pendingReload = false;
+    }
+  }, 2000);
+}
+
+function stopComparePoll() {
+  if (compare.timer) {
+    clearInterval(compare.timer);
+    compare.timer = null;
+  }
+}
+
+// onRunUpdate 由 Go 侧 runtime.EventsEmit("run:update", runID) 触发。
+function onRunUpdate(runID) {
+  if (state.view !== "compare") return;
+  // runID 从 Go int64 过来，JS 侧按 number 处理（两侧比较用 ==，兼容字符串化）。
+  if (compare.runID != null && Number(runID) !== Number(compare.runID)) return;
+  loadRun(Number(runID)).then(() => loadRuns(Number(runID))).catch(() => {});
+}
+
 // ---- 事件绑定 ----
 function bind() {
   $("btnCollect").onclick = async () => {
@@ -409,6 +734,19 @@ function bind() {
   $("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
   $("btnCloseSearch").onclick = () => $("searchPanel").classList.add("hidden");
 
+  // 视图切换
+  $("btnViewMonitor").onclick = () => switchView("monitor");
+  $("btnViewCompare").onclick = () => switchView("compare");
+
+  // 对比实验台
+  $("btnStartCompare").onclick = startCompare;
+  $("btnStopRun").onclick = stopRun;
+  $("btnReloadRuns").onclick = () => loadRuns(compare.runID);
+  $("runSelect").onchange = (e) => {
+    const id = Number(e.target.value);
+    if (id) loadRun(id);
+  };
+
   $("btnAbout").onclick = async () => {
     try {
       $("aboutVersion").textContent = "版本：" + (await window.go.main.App.Version());
@@ -434,6 +772,11 @@ function bind() {
 // ---- 启动 ----
 window.addEventListener("DOMContentLoaded", async () => {
   bind();
+  initCompareHarnesses();
+  // 事件驱动刷新：Go 侧编排器每次落库 → runtime.EventsEmit("run:update", runID)。
+  if (window.runtime && window.runtime.EventsOn) {
+    window.runtime.EventsOn("run:update", onRunUpdate);
+  }
   await loadHarnesses();
   // 自动选中第一个有数据的 harness
   const first = state.harnesses.find((h) => h.eventCount > 0);

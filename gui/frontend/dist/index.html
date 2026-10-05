@@ -14,6 +14,10 @@
         <span class="logo">◉</span>
         <span class="title">harness-monitor</span>
       </div>
+      <div class="view-switch" role="tablist">
+        <button id="btnViewMonitor" class="btn small active" title="按 harness → 会话 → 时间线浏览">监控</button>
+        <button id="btnViewCompare" class="btn small" title="同一问题并行跑四家 harness 对比">对比实验台</button>
+      </div>
       <div class="search-box">
         <input id="searchInput" type="text" placeholder="搜索所有内容原文…（回车搜索）" />
         <label class="scope"><input type="checkbox" id="scopeCurrent" /> 仅当前 harness</label>
@@ -26,7 +30,7 @@
     </header>
 
     <!-- 主区域：三级导航 -->
-    <main class="layout">
+    <main id="monitorView" class="layout">
       <!-- 第一级：harness -->
       <aside class="pane pane-harness">
         <div class="pane-title">HARNESS</div>
@@ -67,6 +71,34 @@
           </span>
         </div>
         <div id="timeline" class="timeline"></div>
+      </section>
+    </main>
+
+    <!-- 对比实验台视图 -->
+    <main id="compareView" class="compare hidden">
+      <!-- 输入区 -->
+      <section class="compare-input">
+        <textarea id="comparePrompt" rows="3" placeholder="输入要对比的问题（四家 harness 各跑一遍同一 prompt）…"></textarea>
+        <div class="compare-controls">
+          <div class="compare-harnesses" id="compareHarnesses"></div>
+          <div class="compare-buttons">
+            <button id="btnStartCompare" class="btn primary">▶ 开始对比</button>
+            <button id="btnStopRun" class="btn" disabled>■ 停止</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 历史批次 -->
+      <section class="compare-runs">
+        <label class="compare-runs-label">历史批次</label>
+        <select id="runSelect"></select>
+        <button id="btnReloadRuns" class="btn small" title="重新加载批次列表">⟳ 刷新列表</button>
+        <span id="runMeta" class="dim"></span>
+      </section>
+
+      <!-- 并列列区 -->
+      <section id="compareColumns" class="compare-columns">
+        <div class="compare-empty">选择四家 harness，输入问题，点击「开始对比」——四列会并行实时更新</div>
       </section>
     </main>
 
