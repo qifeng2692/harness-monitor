@@ -1,0 +1,6 @@
+{"type": "system", "subtype": "init", "model": "workbuddy-ai-plugin/deepseek-v4.1-flash", "session_id": "20261005_122539_3e044a", "timestamp": 1791174340213}
+{"type": "text", "text": "P", "timestamp": 1791174347516}
+{"type": "text", "text": "ONG", "timestamp": 1791174347517}
+{"type": "result", "session_id": "20261005_122539_3e044a", "exit_code": 0, "text": "PONG", "tokens": {"input": 19473, "output": 80, "total": 21857, "cache_read": 2304, "cache_write": 0}, "duration_ms": 7501, "timestamp": 1791174347714}
+
+session_id: 20261005_122539_3e044a

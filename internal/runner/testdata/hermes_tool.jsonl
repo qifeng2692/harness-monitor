@@ -1,0 +1,8 @@
+{"type": "system", "subtype": "init", "model": "workbuddy-ai-plugin/deepseek-v4.1-flash", "session_id": "20261005_122839_a03798", "timestamp": 1791174520353}
+{"type": "tool_use", "name": "terminal", "input": {"command": "echo LABTEST"}, "timestamp": 1791174523688}
+{"type": "tool_result", "name": "terminal", "output": "{\"output\": \"LABTEST\", \"exit_code\": 0, \"error\": null}", "duration_ms": 1238, "is_error": false, "timestamp": 1791174524927}
+{"type": "text", "text": "\n\nD", "timestamp": 1791174527810}
+{"type": "text", "text": "ONE", "timestamp": 1791174527810}
+{"type": "result", "session_id": "20261005_122839_a03798", "exit_code": 0, "text": "DONE", "tokens": {"input": 2092, "output": 42, "total": 43990, "cache_read": 41856, "cache_write": 0}, "duration_ms": 7482, "timestamp": 1791174527835}
+
+session_id: 20261005_122839_a03798

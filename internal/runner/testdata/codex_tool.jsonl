@@ -1,0 +1,9 @@
+Reading additional input from stdin...
+{"type":"thread.started","thread_id":"01a10a52-538e-7bc3-9afc-cffce7622a42"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  user (C:\\Users\\QF\\.codex\\config.toml): `disable_response_storage` is ignored."}}
+{"type":"item.completed","item":{"id":"item_1","type":"error","message":"Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  user (C:\\Users\\QF\\.codex\\config.toml): `disable_response_storage` is ignored."}}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"\"C:\\\\Users\\\\QF\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\pwsh.exe\" -Command 'echo LABTEST'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"\"C:\\\\Users\\\\QF\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\pwsh.exe\" -Command 'echo LABTEST'","aggregated_output":"LABTEST\r\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"DONE"}}
+{"type":"turn.completed","usage":{"input_tokens":15502,"cached_input_tokens":15104,"cache_write_input_tokens":0,"output_tokens":43,"reasoning_output_tokens":0}}
