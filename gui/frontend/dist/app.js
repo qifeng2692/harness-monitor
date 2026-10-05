@@ -10,6 +10,7 @@ const state = {
   sessions: [],
   currentSession: null,
   events: [],
+  explains: [], // 与 events 一一对应的自然语言说明
   kindFilter: "",
   live: false,
   liveTimer: null,
@@ -89,6 +90,12 @@ async function selectSession(sessionId) {
   renderSessions();
   try {
     state.events = await window.go.main.App.GetEvents(state.currentHarness, sessionId);
+    // 自然语言说明（与 events 一一对应；失败不阻塞时间线展示）
+    try {
+      state.explains = await window.go.main.App.ExplainSession(state.currentHarness, sessionId);
+    } catch (_) {
+      state.explains = [];
+    }
     renderTimeline();
     setStatus(`已加载 ${state.events.length} 个步骤`);
   } catch (e) {
@@ -171,6 +178,7 @@ function renderStep(e) {
 
   const preview = oneLine(e.content);
   const label = KIND_LABEL[e.kind] || e.kind;
+  const idx = state.events.findIndex((x) => x.seq === e.seq);
 
   div.innerHTML = `
     <div class="step-left">
@@ -180,11 +188,11 @@ function renderStep(e) {
     <div class="step-body">
       <div class="step-title">${esc(e.title || label)}</div>
       ${!isExpanded && preview ? `<div class="step-preview">${esc(preview)}</div>` : ""}
-      ${isExpanded ? renderExpanded(e) : ""}
+      ${isExpanded ? renderExpanded(e, idx) : ""}
     </div>`;
 
   div.onclick = (ev) => {
-    if (ev.target.closest(".step-content")) return; // 内容区滚动不收起
+    if (ev.target.closest(".step-content") || ev.target.closest(".step-explain")) return; // 内容区滚动不收起
     if (state.expanded.has(e.seq)) state.expanded.delete(e.seq);
     else state.expanded.add(e.seq);
     div.replaceWith(renderStep(e));
@@ -192,9 +200,21 @@ function renderStep(e) {
   return div;
 }
 
-function renderExpanded(e) {
+function renderExpanded(e, idx) {
   const contentLen = (e.content || "").length;
   let html = "";
+  // 自然语言说明（用户需求：每一步讲清楚衔接关系）
+  const ex = state.explains[idx];
+  if (ex) {
+    html += `<div class="step-explain">
+      <div class="explain-row"><span class="explain-label">这一步</span><span>${esc(ex.summary)}</span></div>
+      <div class="explain-row"><span class="explain-label">输入来自</span><span>${esc(ex.from)}</span></div>
+      <div class="explain-row"><span class="explain-label">输出去向</span><span>${esc(ex.to)}</span></div>
+      <div class="explain-row"><span class="explain-label">给用户看吗</span><span>${esc(ex.visible)}</span></div>
+      <div class="explain-row"><span class="explain-label">为什么这样流转</span><span>${esc(ex.why)}</span></div>
+      <div class="explain-row"><span class="explain-label">衔接</span><span>${esc(ex.nextHint)}</span></div>
+    </div>`;
+  }
   if (contentLen > 0) {
     html += `<div class="step-content">${esc(e.content)}</div>`;
     html += `<div class="content-note">全文 ${fmtBytes(contentLen)} · 点击空白处收起</div>`;

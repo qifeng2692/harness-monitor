@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/qf/harness-monitor/internal/collect"
+	"github.com/qf/harness-monitor/internal/explain"
 	"github.com/qf/harness-monitor/internal/model"
 	"github.com/qf/harness-monitor/internal/store"
 )
@@ -250,6 +251,25 @@ func (a *App) GetEventMeta(meta string) map[string]any {
 		out["raw"] = meta
 	}
 	return out
+}
+
+// ExplainSession 为会话的每一步生成自然语言说明（与 GetEvents 返回的顺序一一对应）。
+// 前端在步骤详情里展示：这一步是什么 / 输入来自哪 / 输出给谁（是否显示给用户）/ 为什么流转。
+func (a *App) ExplainSession(harness, sessionID string) ([]explain.StepExplain, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("数据库未打开")
+	}
+	events, err := a.store.ListEvents(harness, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]explain.Event, 0, len(events))
+	for _, e := range events {
+		items = append(items, explain.Event{
+			Seq: e.Seq, Kind: e.Kind, Title: e.Title, Meta: e.Meta,
+		})
+	}
+	return explain.ExplainAll(items), nil
 }
 
 // ---- 工具 ------------------------------------------------------------------

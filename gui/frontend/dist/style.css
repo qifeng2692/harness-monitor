@@ -167,6 +167,19 @@ body {
   font-family: var(--mono); font-size: 11px; color: var(--fg-dim);
   white-space: pre-wrap; word-break: break-word;
 }
+
+/* 自然语言步骤说明 */
+.step-explain {
+  margin-top: 8px; padding: 10px 12px;
+  background: #1f6feb11; border: 1px solid #1f6feb44; border-radius: 6px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.explain-row { display: flex; gap: 10px; font-size: 12.5px; line-height: 1.55; }
+.explain-label {
+  flex-shrink: 0; width: 92px; text-align: right;
+  color: var(--accent); font-weight: 600; font-size: 12px;
+}
+.explain-row > span:last-child { flex: 1; color: var(--fg); }
 .content-note { color: var(--fg-dim); font-size: 11px; margin-top: 4px; }
 
 .timeline-empty { padding: 40px; text-align: center; color: var(--fg-dim); }
