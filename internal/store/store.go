@@ -43,6 +43,40 @@ CREATE TABLE IF NOT EXISTS ingest_state (
 	mtime   TEXT    NOT NULL DEFAULT '',
 	PRIMARY KEY (source, file)
 );
+CREATE TABLE IF NOT EXISTS runs (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	prompt     TEXT NOT NULL,
+	harnesses  TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	status     TEXT NOT NULL DEFAULT 'running'
+);
+CREATE TABLE IF NOT EXISTS run_harness (
+	run_id      INTEGER NOT NULL,
+	harness     TEXT NOT NULL,
+	status      TEXT NOT NULL DEFAULT 'pending',
+	started_at  TEXT NOT NULL DEFAULT '',
+	ended_at    TEXT NOT NULL DEFAULT '',
+	duration_ms INTEGER NOT NULL DEFAULT 0,
+	tokens_in   INTEGER NOT NULL DEFAULT 0,
+	tokens_out  INTEGER NOT NULL DEFAULT 0,
+	cost_usd    REAL    NOT NULL DEFAULT 0,
+	final_text  TEXT NOT NULL DEFAULT '',
+	error       TEXT NOT NULL DEFAULT '',
+	session_id  TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (run_id, harness)
+);
+CREATE TABLE IF NOT EXISTS run_events (
+	id       INTEGER PRIMARY KEY AUTOINCREMENT,
+	run_id   INTEGER NOT NULL,
+	harness  TEXT NOT NULL,
+	seq      INTEGER NOT NULL,
+	time     TEXT NOT NULL,
+	kind     TEXT NOT NULL,
+	title    TEXT NOT NULL DEFAULT '',
+	content  TEXT NOT NULL DEFAULT '',
+	meta     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_run_events_rhs ON run_events(run_id, harness, seq);
 `
 
 // Store 包装一个 SQLite 连接。
