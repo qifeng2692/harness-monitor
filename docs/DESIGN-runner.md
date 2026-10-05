@@ -158,6 +158,39 @@ ExplainRunEvents(runID int64, harness string) ([]explain.StepExplain, error)
 实时推送：每次有新事件/状态变化，`runtime.EventsEmit(a.ctx, "run:update", runID)`。
 前端 `window.runtime.EventsOn("run:update", ...)` 收到后拉取增量。
 
+**实现落点（HM-C4）**：真实逻辑在 `internal/compare`（包 `compare`），`gui/app.go` 只做绑定透传——
+Wails 绑定层是 package main，cmd/ 无法 import，独立成包才能让验收程序（`cmd/hmc4check`）跑同一段代码。
+前端绑定名不变：`StartCompare / StopRun / ListRuns / GetRun / GetRunEvents / ExplainRunEvents`
+（Wails 生成 `window.go.main.App.*`）。
+
+实现后的确切签名与数据结构：
+
+```go
+// internal/compare
+type RunHarnessInfo struct { Harness, Status, StartedAt, EndedAt string; DurationMs, TokensIn, TokensOut int64
+                             CostUSD float64; FinalText, Error, SessionID string }   // json camelCase
+type RunInfo struct { ID int64; Prompt string; Harnesses []string; CreatedAt, Status string
+                      Active bool; Runners []RunHarnessInfo }   // json camelCase
+type RunDetail = RunInfo   // 详情与列表项同构，前端复用同一渲染函数
+
+func (s *Service) StartCompare(prompt string, harnesses []string) (int64, error) // 立即返回 runID
+func (s *Service) StopRun(runID int64) error
+func (s *Service) ListRuns() ([]RunInfo, error)          // 倒序，最近 50 个
+func (s *Service) GetRun(runID int64) (RunDetail, error)
+func (s *Service) GetRunEvents(runID int64, harness string) ([]model.Event, error)  // 与主监控同结构
+func (s *Service) ExplainRunEvents(runID int64, harness string) ([]explain.StepExplain, error)
+func New(st *store.Store) *Service   // 内部 runner.New(st)；Service.OnUpdate 接 runtime.EventsEmit
+func (s *Service) Close()            // App.shutdown 调：停在跑批次 + 关 writer
+```
+
+`RunInfo.Active` 报告编排器此刻是否仍在跑该批次（前端据此启用「停止」按钮；批次 done 后必为 false）。
+`GetRunEvents` 的 JSON 形状与主监控 `GetEvents` 一致（`EventInfo`），前端复用渲染逻辑。
+
+**验收工具**：`cmd/hmc4check` 无 GUI 驱动同一套 `internal/compare`（PONG 四家 → 轮询 GetRun →
+打印各家 status/duration/tokens/final_text/events → ListRuns 历史）；`-stop-after 6s` 可验收
+StopRun 路径（各家应记 stopped）。它默认用 `data/` 下与 GUI 同一个库，因此产生的批次在
+GUI 的历史列表里同样可见（跨进程持久化）。
+
 ## 7. 前端（gui/frontend/dist）
 
 - 顶栏加视图切换：`[监控] [对比实验台]`（简单 show/hide，不引入路由）
@@ -178,6 +211,10 @@ ExplainRunEvents(runID int64, harness string) ([]explain.StepExplain, error)
 - **magpie 不参与对比**：它是网关不是 harness（agent 运行器），只作为四家的模型路由层
 - **模型**：各 harness 使用各自当前配置的模型（这正是"对比 harness"的含义）
 - **reasoning**：hermes stream 协议不含推理（协议限制）；claude/pi/codex 有则记录
+- **codex 的 `error` 事件可能是噪声**：实测 codex 会为「忽略未知配置项」（如
+  `~/.codex/config.toml` 里的 `disable_response_storage`）发 `item.completed item.type=error`。
+  按第 4 节映射它会落成 `kind=error` 事件（如实记录，不丢），但它**不是运行失败**——
+  该家 status 仍为 done。前端渲染时不要把 `error` 事件与 status=failed 混为一谈（HM-C5）
 
 ## 9. 验收标准（E2E）
 

@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"github.com/qf/harness-monitor/internal/collect"
+	"github.com/qf/harness-monitor/internal/compare"
 	"github.com/qf/harness-monitor/internal/explain"
 	"github.com/qf/harness-monitor/internal/model"
 	"github.com/qf/harness-monitor/internal/store"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App 是 Wails 应用实例（绑定给前端）。
@@ -24,6 +26,10 @@ type App struct {
 	ctx   context.Context
 	store *store.Store
 	mu    sync.Mutex // 串行化采集（避免并发写库）
+
+	// svc 是对比实验台的 API 服务（持有 runner.Orchestrator）。
+	// startup 时创建；shutdown 时 Close（停在跑批次 + 关 writer）。
+	svc *compare.Service
 }
 
 // version 由构建期注入：go build -ldflags "-X main.version=..."。
@@ -41,9 +47,21 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.store = s
+
+	// 对比实验台服务：持有编排器（并发 spawn + 增量写库 + 停止）。
+	a.svc = compare.New(s)
+	// 每次落库 → 推 run:update 给前端（前端收到后拉增量）。
+	a.svc.OnUpdate = func(runID int64) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "run:update", runID)
+		}
+	}
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	if a.svc != nil {
+		a.svc.Close() // 停全部在跑批次 + 关 writer goroutine
+	}
 	if a.store != nil {
 		_ = a.store.Close()
 	}
@@ -70,14 +88,14 @@ type SessionInfo struct {
 
 // EventInfo 是时间线步骤（内容全文）。
 type EventInfo struct {
-	ID        int64  `json:"id"`
-	Seq       int64  `json:"seq"`
-	Time      string `json:"time"`
-	Kind      string `json:"kind"`
-	Title     string `json:"title"`
-	Content   string `json:"content"`
-	Meta      string `json:"meta"`
-	ParentID  string `json:"parentId"`
+	ID       int64  `json:"id"`
+	Seq      int64  `json:"seq"`
+	Time     string `json:"time"`
+	Kind     string `json:"kind"`
+	Title    string `json:"title"`
+	Content  string `json:"content"`
+	Meta     string `json:"meta"`
+	ParentID string `json:"parentId"`
 }
 
 // SearchHitInfo 是搜索命中。
@@ -272,7 +290,87 @@ func (a *App) ExplainSession(harness, sessionID string) ([]explain.StepExplain, 
 	return explain.ExplainAll(items), nil
 }
 
+// ---- API：对比实验台（Compare Lab） ----------------------------------------
+//
+// 规格见 docs/DESIGN-runner.md 第 6 节。真实逻辑在 internal/compare（与 cmd/hmc4check
+// 共用同一实现），这里只做绑定透传。实时推送：编排器每次落库 → runtime.EventsEmit(
+// a.ctx, "run:update", runID)；前端 window.runtime.EventsOn("run:update", ...) 收到后拉增量。
+
+// StartCompare 启动一次对比运行：创建 run 行 → 并发 spawn 四家 → 立即返回 runID。
+//
+// 过程经 "run:update" 事件推送（前端收到后调 GetRun/GetRunEvents 拉增量）。
+func (a *App) StartCompare(prompt string, harnesses []string) (int64, error) {
+	if a.svc == nil {
+		return 0, fmt.Errorf("对比实验台未就绪（数据库未打开）")
+	}
+	return a.svc.StartCompare(prompt, harnesses)
+}
+
+// StopRun 停止一个运行中的批次：kill 所有子进程，各家终态记 stopped。
+func (a *App) StopRun(runID int64) error {
+	if a.svc == nil {
+		return fmt.Errorf("对比实验台未就绪（数据库未打开）")
+	}
+	return a.svc.StopRun(runID)
+}
+
+// ListRuns 返回最近批次（倒序，最新在前），每项含各 harness 状态摘要。
+func (a *App) ListRuns() ([]compare.RunInfo, error) {
+	if a.svc == nil {
+		return nil, fmt.Errorf("对比实验台未就绪（数据库未打开）")
+	}
+	return a.svc.ListRuns()
+}
+
+// GetRun 返回批次详情：每 harness 一行（状态/耗时/tokens/cost/final_text/session_id）。
+func (a *App) GetRun(runID int64) (compare.RunDetail, error) {
+	if a.svc == nil {
+		return compare.RunDetail{}, fmt.Errorf("对比实验台未就绪（数据库未打开）")
+	}
+	return a.svc.GetRun(runID)
+}
+
+// GetRunEvents 返回某批次某家 harness 的事件流（与主监控 GetEvents 同结构，
+// 前端复用同一套渲染逻辑）。
+func (a *App) GetRunEvents(runID int64, harness string) ([]EventInfo, error) {
+	if a.svc == nil {
+		return nil, fmt.Errorf("对比实验台未就绪（数据库未打开）")
+	}
+	events, err := a.svc.GetRunEvents(runID, harness)
+	if err != nil {
+		return nil, err
+	}
+	return toEventInfos(events), nil
+}
+
+// ExplainRunEvents 为某批次某家 harness 的每一步生成自然语言说明（复用 internal/explain，
+// 返回顺序与 GetRunEvents 一一对应）。
+func (a *App) ExplainRunEvents(runID int64, harness string) ([]explain.StepExplain, error) {
+	if a.svc == nil {
+		return nil, fmt.Errorf("对比实验台未就绪（数据库未打开）")
+	}
+	return a.svc.ExplainRunEvents(runID, harness)
+}
+
 // ---- 工具 ------------------------------------------------------------------
+
+// toEventInfos 把存储层事件转成前端结构（与 GetEvents 同一形状，前端可复用渲染）。
+func toEventInfos(events []model.Event) []EventInfo {
+	out := make([]EventInfo, 0, len(events))
+	for _, e := range events {
+		out = append(out, EventInfo{
+			ID:       e.ID,
+			Seq:      e.Seq,
+			Time:     fmtTime(e.Time),
+			Kind:     e.Kind,
+			Title:    e.Title,
+			Content:  e.Content,
+			Meta:     e.Meta,
+			ParentID: e.ParentID,
+		})
+	}
+	return out
+}
 
 func fmtTime(t time.Time) string {
 	if t.IsZero() {

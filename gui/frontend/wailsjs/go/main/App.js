@@ -6,6 +6,10 @@ export function Collect(arg1) {
   return window['go']['main']['App']['Collect'](arg1);
 }
 
+export function ExplainRunEvents(arg1, arg2) {
+  return window['go']['main']['App']['ExplainRunEvents'](arg1, arg2);
+}
+
 export function ExplainSession(arg1, arg2) {
   return window['go']['main']['App']['ExplainSession'](arg1, arg2);
 }
@@ -18,8 +22,20 @@ export function GetEvents(arg1, arg2) {
   return window['go']['main']['App']['GetEvents'](arg1, arg2);
 }
 
+export function GetRun(arg1) {
+  return window['go']['main']['App']['GetRun'](arg1);
+}
+
+export function GetRunEvents(arg1, arg2) {
+  return window['go']['main']['App']['GetRunEvents'](arg1, arg2);
+}
+
 export function ListHarnesses() {
   return window['go']['main']['App']['ListHarnesses']();
+}
+
+export function ListRuns() {
+  return window['go']['main']['App']['ListRuns']();
 }
 
 export function ListSessions(arg1) {
@@ -32,6 +48,14 @@ export function OpenInExplorer() {
 
 export function Search(arg1, arg2) {
   return window['go']['main']['App']['Search'](arg1, arg2);
+}
+
+export function StartCompare(arg1, arg2) {
+  return window['go']['main']['App']['StartCompare'](arg1, arg2);
+}
+
+export function StopRun(arg1) {
+  return window['go']['main']['App']['StopRun'](arg1);
 }
 
 export function Version() {
