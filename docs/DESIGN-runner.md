@@ -132,6 +132,11 @@ final_text = 最后一个 turn_end 的 text 块。
 - **读取必须用 `bufio.Reader.ReadBytes('\n')`（或 Scanner 带 ≥1MB buffer）**：
   pi 的单行最大可达 ~118KB（message_start 携带完整 system prompt），默认 64KB Scanner 会报错
 - prompt 通过 stdin 的：`cmd.Stdin = strings.NewReader(prompt)`；其余 `Stdin = nil`
+- **子进程环境净化（2026-10-05 实收坑）**：spawn 时必须把 `NO_PROXY`/`no_proxy` 合并进
+  回环地址（`127.0.0.1,localhost`）。若上层环境有 `HTTP_PROXY`（如 Clash 127.0.0.1:7890）
+  且 NO_PROXY 未含回环，harness 对本地 magpie 网关的请求会被发给代理 → 代理对回环返回
+  502 → 表现为「网关故障」，实为环境变量污染。对照实验：同环境批次 #8（修复前）3 失败
+  1 完成 vs 批次 #9（修复后）4/4 全完成。实现见 `runner.go` 的 `sanitizedEnv()`。
 - 超时：默认 10 分钟/harness，超时 `cmd.Process.Kill()`（记录 status=timeout）
 - 退出码非 0 且未收到完成事件 → status=failed，error=最后一条 error 事件或 stderr 摘要
 - 每家结束 → 更新 run_harness 行；全部结束 → runs.status='done'
