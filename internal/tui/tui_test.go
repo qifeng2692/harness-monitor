@@ -9,8 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 
-	"github.com/qf/harness-monitor/internal/model"
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 // 已知长内容里的标记：位于 80 字符摘要窗口之外，只有展开全文才能看到。

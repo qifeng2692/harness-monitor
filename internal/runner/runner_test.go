@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qf/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/model"
 )
 
 // fixtureCase 是一个 fixture 的期望。

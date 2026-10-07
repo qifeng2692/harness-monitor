@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/qf/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/model"
 )
 
 // piRec 是 pi --mode json 的一行。

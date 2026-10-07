@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/model"
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 // scriptedRunner 是注入用的 Runner 工厂：每家按 harness 名给一份事件脚本。

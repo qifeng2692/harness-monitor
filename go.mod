@@ -1,4 +1,4 @@
-module github.com/qf/harness-monitor
+module github.com/qifeng2692/harness-monitor
 
 go 1.27.1
 

@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/explain"
-	"github.com/qf/harness-monitor/internal/model"
-	"github.com/qf/harness-monitor/internal/runner"
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/explain"
+	"github.com/qifeng2692/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/runner"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 // listLimit 是 ListRuns 返回的批次数上限（最近 N 个）。

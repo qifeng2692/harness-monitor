@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 const integrationPrompt = "Reply with exactly: PONG"

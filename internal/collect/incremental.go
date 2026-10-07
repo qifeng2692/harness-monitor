@@ -12,7 +12,7 @@ import (
 	"bufio"
 	"bytes"
 
-	"github.com/qf/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/model"
 )
 
 // splitCompleteLines 是 bufio.Scanner 的分割函数：只产出以换行结尾的完整行。

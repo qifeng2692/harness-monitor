@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/model"
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 // 四家 harness 的规范名（与主监控库一致）。

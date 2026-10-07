@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/qf/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/model"
 )
 
 // codexRec 是 codex --json 的一行。

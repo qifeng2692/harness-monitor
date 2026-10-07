@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/model"
 )
 
 // hermesRec 是 hermes stream-json 的一行。

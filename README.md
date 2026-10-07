@@ -1,59 +1,87 @@
 # harness-monitor
 
-监控多个 AI coding harness 的本地信息流——从窗口输入开始，到会话执行完毕，每一步（用户输入 / 模型推理 / 工具调用参数 / 工具结果）**内容级可见**。按 harness 独立、按会话独立。
+本地 AI coding harness 的统一观测与对比工具（Go + Wails v2 桌面应用）。
+
+两个核心功能：
+
+- **监控** — 采集本机各 AI coding harness 的步骤级事件流：从用户输入开始，到会话执行完毕，每一步（用户输入 / 模型推理 / 工具调用参数 / 工具结果）**内容级可见**（不是只记 token）。按 harness 独立、按会话独立。
+- **对比实验台** — 一个问题并发发给多个 harness，各自独立运行、分别记录、并列显示，方便对比同一问题下不同 harness 的处理过程。
+
+![对比实验台](docs/screenshots/compare-lab.png)
 
 ## 目标 harness
 
-Hermes · Codex · Claude Code · pi · magpie（网关用量）
+Hermes · Codex · Claude Code · pi（另采集 magpie 网关用量）
 
 ## 使用
 
-### 快速开始
+双击 `harness-monitor.exe` 启动 GUI。
 
-双击仓库根目录的 **`harness-monitor.exe`**（自动增量采集全部 harness → 直接进入 TUI）。
+### 监控视图（三级导航：harness → 会话 → 时间线）
 
-也可以创建桌面快捷方式指向它（工作目录设为 `G:\projects\harness-monitor`）。
+![监控视图](docs/screenshots/monitor-view.png)
 
-### TUI 操作（三级导航：harness → 会话 → 时间线）
+- 点开任一步骤：内容全文 + 自然语言说明（这一步是什么 / 输入来自哪 / 输出去向 / 是否显示给用户 / 为什么流转到下一步）
+- 搜索所有内容原文（回车搜索，命中后跳转定位）
+- LIVE 跟随（增量采集 + 自动刷新）、回放（逐步查看）、按类型过滤
 
-```
-harness 层： ↑↓ 选 harness → enter 进入；f 搜索（限定当前 harness）
-会话层：    ↑↓ 选会话 → enter 进入；F 前缀过滤；esc 返回
-时间线层：  ↑↓ 滚动步骤 → enter 展开全文
-            space 进入回放（n/→ 下一步 · p/← 上一步 · esc 退出）
-            l 切换 live 跟随（每 2s 增量采集，自动滚到底部）
-任意层：    / 搜索（搜所有内容原文，enter 跳转定位）· ? 帮助 · r 刷新 · q 退出
-```
+### 对比实验台
 
-### CLI 快捷命令
+- 输入一个问题，勾选 harness（默认四家全选），点「开始对比」
+- 四列并列实时更新：状态徽标 / 耗时 / token 用量 / 费用 / 步骤时间线 / 最终回答
+- 运行中可「停止」；历史批次随时回看
 
-```bash
-hm collect --harness codex --incremental   # 增量采集（幂等；不带 --incremental 为全量回填）
-hm ls --harness hermes                     # 会话列表
-hm show codex <session-id>                 # 会话时间线
-hm show codex <session-id> --full          # 全文模式
-hm version
-```
+## 数据来源
 
-数据：`data/hm.db`（SQLite；环境变量 `HM_DATA_DIR` 覆盖数据目录）。
+各 harness 的本地会话存储（只读采集，增量续读）：
 
-## 开发环境（Windows / git-bash）
+| 数据源 | 位置 | 格式 |
+|---|---|---|
+| Hermes | `~/AppData/Local/hermes/state.db` | SQLite |
+| Codex | `~/.codex/sessions/**/*.jsonl` | JSONL rollout |
+| Claude Code | `~/.claude/projects/**/*.jsonl` | JSONL |
+| pi | `~/.pi/agent/sessions/**/*.jsonl` | JSONL |
+| magpie | `~/.config/magpie/usage.jsonl` | JSONL |
 
-Go 1.27.1 已装在 `C:\dev\go`。首次准备：
+数据统一入库到 `data/hm.db`（SQLite，事件表带 source_key 幂等去重）。环境变量 `HM_DATA_DIR` 可覆盖数据目录。
 
-```bash
-source scripts/env.sh   # Go PATH + 模块下载代理（必需）
-```
+## 构建（Windows / git-bash）
 
-构建与测试：
+前置：Go 1.21+、Wails v2 CLI（`go install github.com/wailsapp/wails/v2/cmd/wails@latest`）、WebView2 Runtime。
 
 ```bash
+# CLI 版
 go build ./... && go vet ./...
-go test ./... -count=1
 go build -o bin/hm.exe ./cmd/hm
+
+# GUI 版（必须用 wails build；普通 go build 会因 build tags 报错）
+cd gui && wails build
+
+# 测试
+go test ./... -count=1
+```
+
+## 架构
+
+```
+cmd/hm             CLI 入口（采集/查询）
+gui/               Wails v2 桌面应用（绑定层 + 静态前端）
+internal/collect   五路采集器（增量续读、幂等入库）
+internal/store     SQLite 存储（事件库 + 对比实验台三表）
+internal/explain   自然语言步骤说明生成器
+internal/runner    四家 harness 非交互运行器 + 输出解析器
+internal/compare   对比实验台编排（并发运行、增量写库、停止）
 ```
 
 ## 文档
 
 - `docs/DESIGN.md` — 设计文档 + 统一事件 kind 规范
-- `docs/DATA-FORMATS.md` — 各数据源实测格式（开发解析器的依据）
+- `docs/DESIGN-runner.md` — 对比实验台设计规格（含四家命令与解析映射）
+- `docs/DATA-FORMATS.md` — 各数据源实测格式
+- `docs/tool-calling-explained.md` — 工具调用机制说明（用真实数据还原）
+
+## 备注
+
+- 采集是只读的，不修改任何 harness 的存储。
+- 对比实验台在独立目录（`data/runs/<run_id>/<harness>/`）里运行各 harness，隔离副作用。
+- 若上层环境设置了 `HTTP_PROXY`（如本地代理），运行器会自动把回环地址合并进 `NO_PROXY`，避免对本地网关的请求被误发到代理。

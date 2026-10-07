@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/model"
-	"github.com/qf/harness-monitor/internal/runner"
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/runner"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 // fakeRunner 是注入用的 Runner：发两条事件、返回 PONG 结果。

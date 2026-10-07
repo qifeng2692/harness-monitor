@@ -1,7 +1,7 @@
 Reading additional input from stdin...
 {"type":"thread.started","thread_id":"01a10a4f-910f-7bd2-a3ae-741337ede976"}
-{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  user (C:\\Users\\QF\\.codex\\config.toml): `disable_response_storage` is ignored."}}
-{"type":"item.completed","item":{"id":"item_1","type":"error","message":"Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  user (C:\\Users\\QF\\.codex\\config.toml): `disable_response_storage` is ignored."}}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  user (C:\\Users\\dev\\.codex\\config.toml): `disable_response_storage` is ignored."}}
+{"type":"item.completed","item":{"id":"item_1","type":"error","message":"Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  user (C:\\Users\\dev\\.codex\\config.toml): `disable_response_storage` is ignored."}}
 {"type":"turn.started"}
 {"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"PONG"}}
 {"type":"turn.completed","usage":{"input_tokens":7693,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":3,"reasoning_output_tokens":0}}

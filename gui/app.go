@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/collect"
-	"github.com/qf/harness-monitor/internal/compare"
-	"github.com/qf/harness-monitor/internal/explain"
-	"github.com/qf/harness-monitor/internal/model"
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/collect"
+	"github.com/qifeng2692/harness-monitor/internal/compare"
+	"github.com/qifeng2692/harness-monitor/internal/explain"
+	"github.com/qifeng2692/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 

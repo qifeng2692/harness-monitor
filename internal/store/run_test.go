@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/model"
 )
 
 // newTestStore 开一个全新临时库（含对比实验台三张表）。

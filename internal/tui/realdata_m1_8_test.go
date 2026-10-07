@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 // TestRealDBSearchReplayLive 用真实事件库（HM_REAL_DB）端到端跑 M1-8 三件套：

@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/model"
 )
 
 // claudeRec 是 claude stream-json 的一行。

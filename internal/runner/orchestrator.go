@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/model"
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 // maxErrorLen 是 run_harness.error 的字符上限（规格：截断 500 字符）。

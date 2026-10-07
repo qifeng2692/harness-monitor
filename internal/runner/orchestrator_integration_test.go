@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/model"
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 // newIntegrationStore 开一个临时库并返回 store。

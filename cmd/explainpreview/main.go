@@ -8,8 +8,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/qf/harness-monitor/internal/explain"
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/explain"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 func main() {

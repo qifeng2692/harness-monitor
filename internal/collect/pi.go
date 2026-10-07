@@ -40,7 +40,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/model"
 )
 
 const piHarness = "pi"

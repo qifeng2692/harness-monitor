@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/qf/harness-monitor/internal/model"
+	"github.com/qifeng2692/harness-monitor/internal/model"
 )
 
 // Sink 是采集器的写入目标（由 store.Store 满足）。

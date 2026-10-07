@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 // TestCollectIncrementalTail 验证增量续读：首轮补历史，之后只跟新增行（offset 续读），

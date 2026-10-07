@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/compare"
-	"github.com/qf/harness-monitor/internal/runner"
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/compare"
+	"github.com/qifeng2692/harness-monitor/internal/runner"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 func main() {

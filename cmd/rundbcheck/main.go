@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/qf/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/store"
 )
 
 func main() {

@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qf/harness-monitor/internal/collect"
-	"github.com/qf/harness-monitor/internal/store"
-	"github.com/qf/harness-monitor/internal/tui"
+	"github.com/qifeng2692/harness-monitor/internal/collect"
+	"github.com/qifeng2692/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/tui"
 )
 
 // version 由构建期注入：go build -ldflags "-X main.version=..."。
