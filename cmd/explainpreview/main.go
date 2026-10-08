@@ -43,7 +43,7 @@ func main() {
 	items := make([]explain.Event, 0, len(events))
 	for _, e := range events {
 		items = append(items, explain.Event{
-			Seq: e.Seq, Kind: e.Kind, Title: e.Title, Meta: e.Meta,
+			Seq: e.Seq, Kind: e.Kind, Title: e.Title, Meta: e.Meta, ParentID: e.ParentID,
 		})
 	}
 
@@ -56,11 +56,24 @@ func main() {
 		e := events[i]
 		x := explains[i]
 		fmt.Printf("━━━ 步骤 %d/%d  [%s] %s ━━━\n", i+1, len(items), e.Kind, e.Title)
+		if x.Round > 0 {
+			fmt.Printf("  工具往返    : 第 %d 轮（配对键 %s）\n", x.Round, x.ToolKey)
+			if x.CallSeq > 0 {
+				fmt.Printf("  调用步骤    : 第 %d 步\n", x.CallSeq)
+			}
+			if x.ResultSeq > 0 {
+				fmt.Printf("  返回步骤    : 第 %d 步\n", x.ResultSeq)
+			}
+		}
 		fmt.Printf("  这一步      : %s\n", x.Summary)
 		fmt.Printf("  输入来自    : %s\n", x.From)
 		fmt.Printf("  输出去向    : %s\n", x.To)
 		fmt.Printf("  给用户看吗  : %s\n", x.Visible)
 		fmt.Printf("  为什么流转  : %s\n", x.Why)
-		fmt.Printf("  衔接        : %s\n\n", x.NextHint)
+		fmt.Printf("  衔接        : %s\n", x.NextHint)
+		if x.WaitNote != "" {
+			fmt.Printf("  间隔说明    : %s\n", x.WaitNote)
+		}
+		fmt.Println()
 	}
 }

@@ -137,6 +137,40 @@ type Event struct {
 - 数据完整性：codex 86/86 会话、pi 190/190 真实会话全覆盖（obs_ ledger 与共享 session_id 已甄别）
 - 测试：`go test ./...` 全过；`go vet` 通过
 
+## 工具调用配对（call ↔ result，2026-10-08 实测）
+
+一次工具调用的「请求」与「返回」在时间线上经常不相邻——实测本机库（`data/hm.db`）：
+
+| harness | 结果落在调用之后 >5 步 | 最长间隔 |
+|---|---|---|
+| codex | 1198 | 11685 步 |
+| hermes | 709 | 3152 步 |
+| pi | 189 | 12 步 |
+| claude | 0（最长 4 步） | — |
+
+只看相邻步骤读不出「这个结果是哪次调用的」，一次工具往返会被拆成两段无关联的记录。
+`internal/explain/pair.go` 用采集器写入的稳定 id 做会话内配对（**调用看 `meta.call_id`，
+结果看 `parent_id`**，实测四家 100% 可配对）：
+
+| harness | 调用侧 | 结果侧 |
+|---|---|---|
+| hermes | `meta.call_id`（`parent_id` 同值） | `parent_id` |
+| codex | `meta.call_id` | `parent_id` |
+| claude | `meta.call_id` | `parent_id`（`meta.tool_use_id` 同值） |
+| pi | `meta.call_id` | `parent_id`（`meta.call_id` 同值） |
+
+配对带来的三件事：
+
+1. **间隔如实告知**——调用步骤说明「结果在第 N 步之后才回来（中间隔了 M 步）」，结果步骤回指
+   「这是第 N 步那次调用的返回」；
+2. **工具结果能拿到真名**——codex 的 `tool.result` 只有 `call_id`、claude 只有 `tool_use_id`，
+   单看该步只能说「未知工具」（实测占全部 `tool.result` 的 25.2%，11423/45342 条），
+   配对后从调用侧补回工具名；
+3. **诚实报告缺失**——调用无结果（实测 44 次，多为会话在工具执行中被中断）与结果无调用
+   （原始记录缺调用侧）分别说明，不静默错配。
+
+配对是纯函数（`PairEvents` / `ExplainOnePaired`），主监控、对比实验台、`cmd/explainpreview` 共用同一实现。
+
 ## 验证方式
 
 - 每个采集器：以本机真实文件为输入，`hm collect` 跑通并打印统计；`hm show` 抽查内容与源文件一致（含全文）；

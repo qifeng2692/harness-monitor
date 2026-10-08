@@ -17,10 +17,11 @@ import (
 
 // Event 是解释器输入的最小事件（从存储/模型层转换而来）。
 type Event struct {
-	Seq   int64
-	Kind  string
-	Title string
-	Meta  string
+	Seq      int64
+	Kind     string
+	Title    string
+	Meta     string
+	ParentID string // 关联父键（工具调用的 call_id 等）——配对靠它（见 pair.go）
 }
 
 // StepExplain 是单步的自然语言说明（前端直接渲染）。
@@ -31,10 +32,20 @@ type StepExplain struct {
 	Visible  string `json:"visible"`  // 是否给用户端显示（是/否 + 原因）
 	Why      string `json:"why"`      // 为什么流转到下一步
 	NextHint string `json:"nextHint"` // 下一步预告（衔接）
+
+	// 工具调用配对（见 pair.go）。非工具步骤保持零值。
+	Round     int    `json:"round"`     // 第几轮工具往返（会话内从 1 起；0 = 不适用）
+	ToolKey   string `json:"toolKey"`   // 配对键（同一工具的多次调用靠它区分）
+	CallSeq   int64  `json:"callSeq"`   // 调用步骤 seq（tool.result 上填；0 = 未配对）
+	ResultSeq int64  `json:"resultSeq"` // 结果步骤 seq（tool.call 上填；0 = 尚无结果）
+	WaitNote  string `json:"waitNote"`  // 调用与结果之间的间隔说明（不相邻时才有）
 }
 
 // ExplainAll 为整个事件序列生成说明（与输入一一对应）。
+//
+// 会先做一次工具调用配对（PairEvents），让相隔很远的「调用 ↔ 返回」在说明里互相指认。
 func ExplainAll(events []Event) []StepExplain {
+	p := PairEvents(events)
 	out := make([]StepExplain, 0, len(events))
 	for i := range events {
 		var prev, next *Event
@@ -44,15 +55,62 @@ func ExplainAll(events []Event) []StepExplain {
 		if i < len(events)-1 {
 			next = &events[i+1]
 		}
-		out = append(out, ExplainOne(&events[i], prev, next))
+		out = append(out, ExplainOnePaired(&events[i], prev, next, p))
 	}
 	return out
 }
 
-// ExplainOne 生成一步的说明。prev/next 可为 nil。
+// ExplainOne 生成一步的说明（不做工具配对）。prev/next 可为 nil。
 func ExplainOne(e, prev, next *Event) StepExplain {
+	return ExplainOnePaired(e, prev, next, nil)
+}
+
+// ExplainOnePaired 在 ExplainOne 基础上叠加工具调用配对信息。p 可为 nil（退化为 ExplainOne）。
+func ExplainOnePaired(e, prev, next *Event, p *Pairing) StepExplain {
+	// 结果侧常常没有工具名（实测：codex 的 tool.result 只有 call_id、claude 只有 tool_use_id，
+	// title 是通用的 "tool result"），单看这一步只能说出「未知工具」。配对后可以从调用侧
+	// 把工具名补回来，让说明书说的是真工具名。
+	override := ""
+	if p != nil {
+		if l := p.LinkOfResult(e.Seq); l != nil && l.Tool != "" {
+			override = l.Tool
+		}
+	}
+	ex := explainOne(e, prev, next, override)
+	if p == nil {
+		return ex
+	}
+	// 调用侧：结果可能很晚才回来（甚至还没回来）——如实告诉用户隔了多少步。
+	if l := p.LinkOfCall(e.Seq); l != nil {
+		ex.Round, ex.ToolKey, ex.ResultSeq = l.Round, p.key[e.Seq], l.ResultSeq
+		if l.ResultSeq == 0 {
+			ex.WaitNote = "这次调用到会话结束（或目前为止）都没有看到返回结果。"
+		} else if l.ResultSeq != e.Seq+1 {
+			ex.WaitNote = fmt.Sprintf("结果不是紧接着出现的：它在第 %d 步之后才回来（中间隔了 %d 步）。",
+				l.ResultSeq, l.ResultSeq-e.Seq-1)
+		}
+	}
+	// 结果侧：指认它属于哪一轮调用。
+	if l := p.LinkOfResult(e.Seq); l != nil {
+		ex.Round, ex.ToolKey, ex.CallSeq = l.Round, p.key[l.CallSeq], l.CallSeq
+		if l.CallSeq != e.Seq-1 {
+			ex.WaitNote = fmt.Sprintf("这是第 %d 步那次调用（第 %d 轮工具往返）的返回，不是紧邻上一步的结果。",
+				l.CallSeq, l.Round)
+		}
+	} else if e.Kind == "tool.result" {
+		ex.WaitNote = "在本次会话记录里找不到与之配对的调用步骤（原始记录里调用侧缺失）。"
+	}
+	return ex
+}
+
+// explainOne 是不含配对信息的说明生成（ExplainOne / ExplainOnePaired 共用）。
+// toolOverride 非空时用它当工具名（配对层从调用侧补来的真名）。
+func explainOne(e, prev, next *Event, toolOverride string) StepExplain {
 	ex := StepExplain{}
 	tool := toolNameOf(e)
+	if toolOverride != "" {
+		tool = toolOverride
+	}
 	prevTool := toolNameOf(prev)
 
 	switch e.Kind {

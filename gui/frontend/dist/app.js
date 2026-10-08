@@ -187,11 +187,19 @@ function renderStep(e, ctx) {
   const preview = oneLine(e.content);
   const label = KIND_LABEL[e.kind] || e.kind;
   const idx = ctx.events.findIndex((x) => x.seq === e.seq);
+  const ex = ctx.explains[idx];
+
+  // 工具往返徽标：同一个工具的多次调用靠「第 N 轮」区分（配对键 tooltip 可核对）。
+  let roundBadge = "";
+  if (ex && ex.round > 0) {
+    roundBadge = `<span class="step-round" title="第 ${ex.round} 轮工具往返 · 配对键 ${esc(ex.toolKey || "")}">第${ex.round}轮</span>`;
+  }
 
   div.innerHTML = `
     <div class="step-left">
       <span class="step-time">${esc((e.time || "").slice(11) || (e.time || "").slice(0, 19))}</span>
       <span class="step-kind ${kindClass(e.kind)}">${esc(label)}</span>
+      ${roundBadge}
     </div>
     <div class="step-body">
       <div class="step-title">${esc(e.title || label)}</div>
@@ -208,20 +216,40 @@ function renderStep(e, ctx) {
   return div;
 }
 
+// renderLinkRow 渲染「这次调用 → 哪一步返回」的跳转行（相隔很远的往返靠它对齐）。
+function renderLinkRow(targetSeq, label, note) {
+  return `<div class="explain-row"><span class="explain-label">${esc(label)}</span>
+    <span><a href="#" class="step-link" data-jump="${targetSeq}">第 ${targetSeq} 步 ↗</a>${note ? ` <span class="link-note">${esc(note)}</span>` : ""}</span></div>`;
+}
+
 function renderExpanded(e, idx, ctx) {
   const contentLen = (e.content || "").length;
   let html = "";
   // 自然语言说明（用户需求：每一步讲清楚衔接关系）
   const ex = ctx.explains[idx];
   if (ex) {
-    html += `<div class="step-explain">
-      <div class="explain-row"><span class="explain-label">这一步</span><span>${esc(ex.summary)}</span></div>
+    html += `<div class="step-explain">`;
+    if (ex.round > 0) {
+      html += `<div class="explain-row"><span class="explain-label">工具往返</span><span>第 ${ex.round} 轮</span></div>`;
+    }
+    if (e.kind === "tool.call" && ex.resultSeq > 0) {
+      html += renderLinkRow(ex.resultSeq, "返回在哪", ex.waitNote);
+    } else if (e.kind === "tool.call" && ex.round > 0 && !ex.resultSeq) {
+      html += `<div class="explain-row"><span class="explain-label">返回在哪</span><span class="link-note">${esc(ex.waitNote || "尚无返回结果")}</span></div>`;
+    }
+    if (e.kind === "tool.result" && ex.callSeq > 0) {
+      html += renderLinkRow(ex.callSeq, "调用在哪", ex.waitNote);
+    }
+    html += `<div class="explain-row"><span class="explain-label">这一步</span><span>${esc(ex.summary)}</span></div>
       <div class="explain-row"><span class="explain-label">输入来自</span><span>${esc(ex.from)}</span></div>
       <div class="explain-row"><span class="explain-label">输出去向</span><span>${esc(ex.to)}</span></div>
       <div class="explain-row"><span class="explain-label">给用户看吗</span><span>${esc(ex.visible)}</span></div>
       <div class="explain-row"><span class="explain-label">为什么这样流转</span><span>${esc(ex.why)}</span></div>
-      <div class="explain-row"><span class="explain-label">衔接</span><span>${esc(ex.nextHint)}</span></div>
-    </div>`;
+      <div class="explain-row"><span class="explain-label">衔接</span><span>${esc(ex.nextHint)}</span></div>`;
+    if (e.kind === "tool.result" && !ex.callSeq && ex.waitNote) {
+      html += `<div class="explain-row"><span class="explain-label">注意</span><span class="link-note">${esc(ex.waitNote)}</span></div>`;
+    }
+    html += `</div>`;
   }
   if (contentLen > 0) {
     html += `<div class="step-content">${esc(e.content)}</div>`;
@@ -235,6 +263,41 @@ function renderExpanded(e, idx, ctx) {
     html += `<div class="step-meta">${esc(pretty)}</div>`;
   }
   return html;
+}
+
+// jumpToStep 在时间线内展开并滚动到某一步（工具往返的调用 ↔ 返回互跳）。
+// rerender 由调用方给出（主监控 = renderTimeline；对比实验台 = renderCompareColumns），
+// scope 限定查找范围（对比实验台里同一 seq 在四列中都可能出现）。
+function jumpToStep(seq, ctx, rerender, scope) {
+  ctx.expanded.add(seq);
+  rerender();
+  const root = scope || document;
+  const el = root.querySelector(`.step[data-seq="${seq}"]`);
+  if (el) {
+    el.scrollIntoView({ block: "center" });
+    el.classList.add("replay-current");
+    setTimeout(() => el.classList.remove("replay-current"), 1600);
+  } else {
+    setStatus(`第 ${seq} 步不在当前视图里（可能被类型过滤或已滚动出列表）`);
+  }
+}
+
+// onStepLinkClick 处理说明里的「第 N 步 ↗」跳转（主监控与对比实验台共用）。
+function onStepLinkClick(ev) {
+  const a = ev.target.closest(".step-link");
+  if (!a) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const seq = Number(a.dataset.jump);
+  if (!seq) return;
+  const col = a.closest(".compare-col");
+  if (col) {
+    const harness = col.dataset.harness;
+    const c = compare.cols[harness];
+    if (c) jumpToStep(seq, c, renderCompareColumns, col);
+    return;
+  }
+  jumpToStep(seq, { expanded: state.expanded }, renderTimeline, $("timeline"));
 }
 
 function fmtBytes(n) {
@@ -580,6 +643,7 @@ function renderCompareColumns() {
 function renderCompareColumn(r) {
   const col = document.createElement("div");
   col.className = "compare-col status-" + (r.status || "pending");
+  col.dataset.harness = r.harness;
 
   const st = STATUS_LABEL[r.status] || r.status || "未知";
   const dur = r.durationMs > 0 ? (r.durationMs / 1000).toFixed(1) + "s" : "—";
@@ -730,6 +794,9 @@ function bind() {
   $("btnLive").onclick = toggleLive;
   $("btnReplay").onclick = toggleReplay;
   $("kindFilter").onchange = (e) => { state.kindFilter = e.target.value; renderTimeline(); };
+  // 工具往返跳转（「第 N 步 ↗」）：事件委托，主监控与对比实验台共用。
+  $("monitorView").addEventListener("click", onStepLinkClick);
+  $("compareColumns").addEventListener("click", onStepLinkClick);
   $("sessionFilter").oninput = renderSessions;
   $("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
   $("btnCloseSearch").onclick = () => $("searchPanel").classList.add("hidden");

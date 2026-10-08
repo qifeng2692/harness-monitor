@@ -189,7 +189,7 @@ func (s *Service) ExplainRunEvents(runID int64, harness string) ([]explain.StepE
 	}
 	items := make([]explain.Event, 0, len(events))
 	for _, e := range events {
-		items = append(items, explain.Event{Seq: e.Seq, Kind: e.Kind, Title: e.Title, Meta: e.Meta})
+		items = append(items, explain.Event{Seq: e.Seq, Kind: e.Kind, Title: e.Title, Meta: e.Meta, ParentID: e.ParentID})
 	}
 	return explain.ExplainAll(items), nil
 }

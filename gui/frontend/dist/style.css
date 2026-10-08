@@ -182,6 +182,16 @@ body {
 .explain-row > span:last-child { flex: 1; color: var(--fg); }
 .content-note { color: var(--fg-dim); font-size: 11px; margin-top: 4px; }
 
+/* 工具调用配对：轮次徽标 + 调用↔返回跳转 */
+.step-round {
+  font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 4px;
+  color: var(--purple); background: #bc8cff1a; border: 1px solid #bc8cff33;
+  display: inline-block; width: fit-content; font-family: var(--mono);
+}
+.step-link { color: var(--accent); text-decoration: none; border-bottom: 1px dashed #58a6ff66; }
+.step-link:hover { color: #79c0ff; border-bottom-style: solid; }
+.link-note { color: var(--fg-dim); font-size: 11.5px; }
+
 .timeline-empty { padding: 40px; text-align: center; color: var(--fg-dim); }
 
 /* ---- 覆盖层 ---- */
