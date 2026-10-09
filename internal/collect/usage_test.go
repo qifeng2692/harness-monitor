@@ -51,7 +51,7 @@ func usageEvents(evs []model.Event) []model.Event {
 }
 
 // TestClaudeCostStateUsage 验证 claude 的 cost-state 行被采成一条 llm.usage：
-// 分模型 token 汇总、费用、模型名进 title，且重复采集幂等。
+// 分模型 token 汇总、费用、模型名进 title，空账行被跳过，且重复采集幂等。
 func TestClaudeCostStateUsage(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_PROJECTS_DIR", dir)
@@ -60,7 +60,9 @@ func TestClaudeCostStateUsage(t *testing.T) {
 		`"totalDuration":5290,"startTime":1791175434200,"modelUsage":{` +
 		`"zcode/GLM-5.3[1m]":{"inputTokens":2862,"outputTokens":16,"thinkingTokens":7,` +
 		`"cacheReadInputTokens":21184,"cacheCreationInputTokens":0,"webSearchRequests":0,"costUSD":0.025302}}}`
-	evs := collectFileInto(t, "claude", dir, "s-1.jsonl", line+"\n")
+	// 第二行是实测存在的空账收尾（无模型调用）——不应产出事件。
+	empty := `{"type":"cost-state","sessionId":"s-2","totalCostUSD":0,"modelUsage":{}}`
+	evs := collectFileInto(t, "claude", dir, "s-1.jsonl", line+"\n"+empty+"\n")
 
 	us := usageEvents(evs)
 	if len(us) != 1 {

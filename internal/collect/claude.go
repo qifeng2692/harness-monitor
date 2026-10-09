@@ -485,8 +485,10 @@ func (r *claudeRun) assistantEvents(rec claudeRecord, sid string, when time.Time
 // 每行一个 llm.usage 事件，title 用模型名（与 hermes 采集器一致：title=模型名），
 // 这样 GUI 时间线上「用量」条目直接显示是哪个模型。
 func (r *claudeRun) costStateEvents(rec claudeRecord, sid string, when time.Time) []model.Event {
-	if len(rec.ModelUsage) == 0 && rec.TotalCostUSD == nil {
-		return nil // 空账（实测存在 totalCostUSD=0 且 modelUsage 为空的收尾行）
+	if len(rec.ModelUsage) == 0 {
+		// 空账：实测存在 totalCostUSD=0 且 modelUsage 为空的收尾行（该会话没有模型调用）。
+		// 按「没有模型明细就没有可报的用量」跳过，避免时间线上出现零值噪声条目。
+		return nil
 	}
 	if when.IsZero() && rec.StartTime != nil {
 		when = time.UnixMilli(int64(*rec.StartTime)).UTC()
