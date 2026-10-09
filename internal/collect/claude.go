@@ -13,6 +13,7 @@
 //	assistant.message.content[] {type:thinking}        → llm.reasoning
 //	assistant.message.content[] {type:text}            → llm.response
 //	assistant.message.content[] {type:tool_use}        → tool.call（content=参数 JSON）
+//	{type:cost-state}（每文件末尾一条会话汇总）        → llm.usage（title=模型名；meta: token/费用/分模型明细）
 //	其余顶层 type（mode/queue-operation/attachment/system/...） → 不映射，计数
 //
 // 会话划分：session_id = 文件名 uuid（去掉 .jsonl）；子代理转录
@@ -281,6 +282,24 @@ type claudeRecord struct {
 	Uuid        string         `json:"uuid"`
 	ParentUuid  string         `json:"parentUuid"`
 	Message     *claudeMessage `json:"message"`
+
+	// cost-state 行（每文件一条，写在会话末尾）：会话级用量与费用汇总。
+	// 实测字段见 docs/DATA-FORMATS.md §3。
+	TotalCostUSD  *float64                    `json:"totalCostUSD"`
+	TotalDuration *float64                    `json:"totalDuration"`
+	StartTime     *float64                    `json:"startTime"`
+	ModelUsage    map[string]claudeModelUsage `json:"modelUsage"`
+}
+
+// claudeModelUsage 是 cost-state.modelUsage 里单个模型的用量（键是「provider/模型名」）。
+type claudeModelUsage struct {
+	InputTokens              int64   `json:"inputTokens"`
+	OutputTokens             int64   `json:"outputTokens"`
+	ThinkingTokens           int64   `json:"thinkingTokens"`
+	CacheReadInputTokens     int64   `json:"cacheReadInputTokens"`
+	CacheCreationInputTokens int64   `json:"cacheCreationInputTokens"`
+	WebSearchRequests        int64   `json:"webSearchRequests"`
+	CostUSD                  float64 `json:"costUSD"`
 }
 
 type claudeMessage struct {
@@ -312,6 +331,10 @@ func (r *claudeRun) mapRecord(rec claudeRecord, rel string, lineNo int, sid stri
 		events = r.userEvents(rec, sid, when)
 	case "assistant":
 		events = r.assistantEvents(rec, sid, when)
+	case "cost-state":
+		// 会话级用量汇总：库里 claude 此前一条 llm.usage 都没有（实测 0 条），
+		// 而文件末尾这行带着完整 token/费用账。不采它 = 这个 harness 的成本不可见。
+		events = r.costStateEvents(rec, sid, when)
 	default:
 		r.unmapped[rec.Type]++
 		return
@@ -453,6 +476,79 @@ func (r *claudeRun) assistantEvents(rec claudeRecord, sid string, when time.Time
 		}
 	}
 	return out
+}
+
+// costStateEvents 处理 type=="cost-state" 的行（每文件一条，写在会话末尾）。
+//
+// 它给出这个会话的**真实账**：总费用 + 分模型的 token 明细（含缓存读写、思考 token）。
+// 事件时间优先用行内 timestamp，缺失时退回 startTime（毫秒 epoch）。
+// 每行一个 llm.usage 事件，title 用模型名（与 hermes 采集器一致：title=模型名），
+// 这样 GUI 时间线上「用量」条目直接显示是哪个模型。
+func (r *claudeRun) costStateEvents(rec claudeRecord, sid string, when time.Time) []model.Event {
+	if len(rec.ModelUsage) == 0 && rec.TotalCostUSD == nil {
+		return nil // 空账（实测存在 totalCostUSD=0 且 modelUsage 为空的收尾行）
+	}
+	if when.IsZero() && rec.StartTime != nil {
+		when = time.UnixMilli(int64(*rec.StartTime)).UTC()
+	}
+
+	// 分模型明细按名排序，保证同一文件重复采集得到相同的 meta（幂等）。
+	names := make([]string, 0, len(rec.ModelUsage))
+	for name := range rec.ModelUsage {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var (
+		in, out, thinking, cacheRead, cacheCreate int64
+		models                                    []map[string]any
+	)
+	for _, name := range names {
+		u := rec.ModelUsage[name]
+		in += u.InputTokens
+		out += u.OutputTokens
+		thinking += u.ThinkingTokens
+		cacheRead += u.CacheReadInputTokens
+		cacheCreate += u.CacheCreationInputTokens
+		models = append(models, map[string]any{
+			"model":                 name,
+			"input_tokens":          u.InputTokens,
+			"output_tokens":         u.OutputTokens,
+			"thinking_tokens":       u.ThinkingTokens,
+			"cache_read_tokens":     u.CacheReadInputTokens,
+			"cache_creation_tokens": u.CacheCreationInputTokens,
+			"web_search_requests":   u.WebSearchRequests,
+			"cost_usd":              u.CostUSD,
+		})
+	}
+
+	totalCost := 0.0
+	if rec.TotalCostUSD != nil {
+		totalCost = *rec.TotalCostUSD
+	}
+	title := "会话用量"
+	if len(names) == 1 {
+		title = names[0]
+	}
+
+	return []model.Event{{
+		Harness:   claudeHarness,
+		SessionID: sid,
+		Time:      when,
+		Kind:      model.KindLLMUsage,
+		Title:     title,
+		Meta: claudeMeta(map[string]any{
+			"source":                "cost-state",
+			"input_tokens":          in,
+			"output_tokens":         out,
+			"thinking_tokens":       thinking,
+			"cache_read_tokens":     cacheRead,
+			"cache_creation_tokens": cacheCreate,
+			"estimated_cost_usd":    totalCost,
+			"models":                models,
+			"total_duration_ms":     rec.TotalDuration,
+		}),
+	}}
 }
 
 // ---- 入库（双上限分批） ----------------------------------------------------

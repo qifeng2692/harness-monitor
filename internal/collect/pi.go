@@ -13,6 +13,7 @@
 //	  {type:thinking,thinking}                      → llm.reasoning
 //	  {type:text,text}                              → llm.response
 //	  {type:toolCall,id,name,arguments}             → tool.call（content=arguments 对象序列化；meta: tool_name/call_id）
+//	  message.usage（每次调用的 token/费用）        → llm.usage（与上面的 llm.response 同属该行，追加为末位事件）
 //	message role=toolResult（{toolCallId,toolName,content[{type:text,text}]}）→ tool.result
 //	  （content=拼接 text 全文；meta: tool_name/call_id；parent_id=toolCallId）
 //	{type:compaction,summary}                       → compaction（title="context compaction"；content=summary）
@@ -283,6 +284,30 @@ type piMessage struct {
 	Content    json.RawMessage `json:"content"` // 字符串（system）或块数组
 	ToolCallID string          `json:"toolCallId"`
 	ToolName   string          `json:"toolName"`
+	Model      string          `json:"model"`
+	Provider   string          `json:"provider"`
+	Usage      *piUsage        `json:"usage"`
+}
+
+// piUsage 是 assistant 消息上的逐次调用用量（实测字段名见 docs/DATA-FORMATS.md §4）。
+// 此前整个结构未被解析 → pi 的 token/费用在库里完全不可见（0 条 llm.usage）。
+type piUsage struct {
+	Input      int64        `json:"input"`
+	Output     int64        `json:"output"`
+	CacheRead  int64        `json:"cacheRead"`
+	CacheWrite int64        `json:"cacheWrite"`
+	Reasoning  int64        `json:"reasoning"`
+	Total      int64        `json:"totalTokens"`
+	Cost       *piUsageCost `json:"cost"`
+}
+
+// piUsageCost 是 pi 记录的本次调用费用（供应商返回的计价，单位美元）。
+type piUsageCost struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite"`
+	Total      float64 `json:"total"`
 }
 
 type piBlock struct {
@@ -371,7 +396,13 @@ func (r *piRun) messageEvents(rec piRecord, sid string, when time.Time) []model.
 			Kind: model.KindTurnStart, Title: "user", Content: text,
 		}}
 	case "assistant":
-		return r.assistantEvents(rec, sid, when)
+		events := r.assistantEvents(rec, sid, when)
+		// 逐次调用的用量单独成事件（llm.usage）。放在这一步而不是塞进 llm.response 的
+		// meta 里，是为了和 hermes/magpie 的「用量」条目在时间线上对齐、可同口径统计。
+		if u := r.usageEvent(rec, sid, when); u != nil {
+			events = append(events, *u)
+		}
+		return events
 	case "toolResult":
 		return []model.Event{{
 			Harness: piHarness, SessionID: sid, Time: when,
@@ -449,6 +480,58 @@ func (r *piRun) assistantEvents(rec piRecord, sid string, when time.Time) []mode
 		}
 	}
 	return out
+}
+
+// usageEvent 把 assistant 消息上的 usage 转成一条 llm.usage 事件；无用量返回 nil。
+//
+// 注意 source_key 的构造：usage 与同一条消息产出的 llm.response 共用
+// piSourceKey(rel,lineNo) 基键，因此调用方（mapRecord）会给多事件自动追加 ":<序号>"，
+// 幂等性不受影响。
+func (r *piRun) usageEvent(rec piRecord, sid string, when time.Time) *model.Event {
+	u := rec.Message.Usage
+	if u == nil {
+		return nil
+	}
+	if u.Input == 0 && u.Output == 0 && u.Total == 0 && u.CacheRead == 0 && u.CacheWrite == 0 && u.Reasoning == 0 {
+		return nil // 全零用量不入库（避免噪声条目）
+	}
+	modelName := rec.Message.Model
+	if modelName == "" {
+		modelName = rec.ModelID
+	}
+	title := modelName
+	if title == "" {
+		title = "用量"
+	}
+
+	meta := map[string]any{
+		"source":        "message.usage",
+		"input_tokens":  u.Input,
+		"output_tokens": u.Output,
+		"cache_read":    u.CacheRead,
+		"cache_write":   u.CacheWrite,
+		"reasoning":     u.Reasoning,
+		"total_tokens":  u.Total,
+		"provider":      rec.Message.Provider,
+		"model":         modelName,
+	}
+	if u.Cost != nil {
+		meta["cost_usd"] = u.Cost.Total
+		meta["cost_detail"] = map[string]any{
+			"input":       u.Cost.Input,
+			"output":      u.Cost.Output,
+			"cache_read":  u.Cost.CacheRead,
+			"cache_write": u.Cost.CacheWrite,
+		}
+	}
+	return &model.Event{
+		Harness:   piHarness,
+		SessionID: sid,
+		Time:      when,
+		Kind:      model.KindLLMUsage,
+		Title:     title,
+		Meta:      piMeta(meta),
+	}
 }
 
 // ---- 入库（双上限分批） ----------------------------------------------------

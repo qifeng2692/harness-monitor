@@ -69,6 +69,15 @@
   - user `message.content` 可含 `[{type: "tool_result", tool_use_id, content}]`
 - 工具调用参数实测：`{"type": "tool_use", "id": "call_00_...", "name": "Glob", "input": {"pattern": "**/*hermes*"}}`
 - 工具结果实测：`{"tool_use_id": "call_00_...", "type": "tool_result", "content": "No files found"}`
+- **会话用量汇总（cost-state）**：每个文件末尾一条 `type: "cost-state"`，给出该会话真实账：
+  ```json
+  {"type":"cost-state","sessionId":"...","totalCostUSD":0.025302,"totalAPIDuration":4513,"totalToolDuration":0,
+   "totalDuration":5290,"startTime":1791175434200,
+   "modelUsage":{"zcode/GLM-5.3[1m]":{"inputTokens":2862,"outputTokens":16,"thinkingTokens":0,
+   "cacheReadInputTokens":21184,"cacheCreationInputTokens":0,"webSearchRequests":0,"costUSD":0.025302}}}
+  ```
+  `modelUsage` 的键是「provider/模型名」；`startTime` 是毫秒 epoch。实测存在 `totalCostUSD=0` 且
+  `modelUsage` 为空的收尾行（无模型调用），采集器对空账不出事件。
 
 ### 3.2 官方扩展点（后续任务用）
 - Hooks：30+ 事件（`PreToolUse, PostToolUse, PostToolUseFailure, SessionStart, SessionEnd, UserPromptSubmit, Stop, StopFailure, PreCompact, PostCompact, SubagentStart/Stop` 等）。
@@ -89,6 +98,12 @@
   - assistant 消息：`content: [{type: "thinking", thinking: "..."}, {type: "text", text: "..."}, {type: "toolCall", id: "call_00_...", name: "bash", arguments: {...}}, ...]`
     - **工具调用块实测结构**：`{"type": "toolCall", "id": "call_00_TmCdkNJCJfeZrAhNgfQ29594", "name": "bash", "arguments": {"command": "cd /g/powershell && ls -la ..."}}` —— `arguments` 是**已解析的对象**（不是字符串）
   - toolResult 消息：`{role: "toolResult", toolCallId: "call_00_...", toolName: "bash", content: [{type: "text", text: "完整输出"}]}`
+  - **assistant 消息自带用量**（每次调用的 token 与费用，此前未被采集）：
+    ```json
+    "usage":{"input":46299,"output":49,"cacheRead":256,"cacheWrite":0,"reasoning":0,
+             "totalTokens":46604,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}
+    ```
+    同一 `message` 上还有 `provider` / `model`（如 `cc-switch-deep-seek` / `deepseek-flash`）。
   - 消息比例实测（单会话前 3000 行）：user 13 / assistant 1443 / toolResult 1453 —— 工具循环是主体
 - `compaction` 记录：上下文压缩事件（92 条实测于大文件）——可观测上下文管理。
 
