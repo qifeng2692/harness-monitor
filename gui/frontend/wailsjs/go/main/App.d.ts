@@ -3,6 +3,7 @@
 import {main} from '../models';
 import {explain} from '../models';
 import {compare} from '../models';
+import {usage} from '../models';
 
 export function Collect(arg1:string):Promise<main.CollectResult>;
 
@@ -27,6 +28,8 @@ export function ListSessions(arg1:string):Promise<Array<main.SessionInfo>>;
 export function OpenInExplorer():Promise<void>;
 
 export function Search(arg1:string,arg2:string):Promise<Array<main.SearchHitInfo>>;
+
+export function SessionUsage(arg1:string,arg2:string):Promise<usage.Summary>;
 
 export function StartCompare(arg1:string,arg2:Array<string>):Promise<number>;
 

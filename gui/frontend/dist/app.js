@@ -11,6 +11,7 @@ const state = {
   currentSession: null,
   events: [],
   explains: [], // 与 events 一一对应的自然语言说明
+  usage: null, // 当前会话的用量/成本合计（后端 internal/usage 口径）
   kindFilter: "",
   live: false,
   liveTimer: null,
@@ -66,6 +67,7 @@ async function selectHarness(name) {
   const prevSession = state.currentSession;
   state.currentSession = null;
   state.events = [];
+  state.usage = null;
   renderHarnesses();
   renderTimeline();
   $("sessionPaneTitle").textContent = "会话 · " + name;
@@ -97,6 +99,12 @@ async function selectSession(sessionId) {
     } catch (_) {
       state.explains = [];
     }
+    // 会话用量/成本合计（各家口径不同，合计规则在后端 internal/usage；失败不阻塞展示）
+    try {
+      state.usage = await window.go.main.App.SessionUsage(state.currentHarness, sessionId);
+    } catch (_) {
+      state.usage = null;
+    }
     renderTimeline();
     setStatus(`已加载 ${state.events.length} 个步骤`);
   } catch (e) {
@@ -126,6 +134,80 @@ function fmtNum(n) {
   return String(n);
 }
 
+// fmtTokens 千分位显示 token 数（用量动辄几万，可读性靠分隔符）。
+function fmtTokens(n) {
+  return Number(n || 0).toLocaleString("en-US");
+}
+
+// fmtCost 显示费用；后端标注「费用未知」时不显示成 $0（那是「不知道」，不是「免费」）。
+function fmtCost(cost, known) {
+  if (!known) return "";
+  if (cost > 0 && cost < 0.0001) return "<$0.0001";
+  return "$" + cost.toFixed(4);
+}
+
+// renderUsageBar 在时间线顶部显示当前会话的用量/成本合计。
+//
+// 各家 harness 的记录形态不同（codex 的 token_count 带累计块与增量块、hermes 是
+// 「会话×模型」汇总、claude 是每会话一条 cost-state、pi/magpie 是逐次调用），
+// 归一与合计规则全在后端 internal/usage，前端只负责展示与如实标注口径。
+function renderUsageBar() {
+  const bar = $("usageBar");
+  const u = state.usage;
+  if (!state.currentSession || !u || (!u.records && !u.skipped)) {
+    bar.classList.add("hidden");
+    bar.innerHTML = "";
+    return;
+  }
+  bar.classList.remove("hidden");
+
+  const item = (label, value, title) =>
+    `<span class="usage-item"${title ? ` title="${esc(title)}"` : ""}><span class="usage-label">${esc(label)}</span>${esc(value)}</span>`;
+
+  const parts = [];
+  parts.push(item("输入", fmtTokens(u.inputTokens), "输入 token（不含缓存读取）"));
+  parts.push(item("输出", fmtTokens(u.outputTokens), "输出 token"));
+  if (u.cacheRead) parts.push(item("缓存读", fmtTokens(u.cacheReadTokens), "从缓存读取的 token（计费通常更低）"));
+  if (u.cacheWrite) parts.push(item("缓存写", fmtTokens(u.cacheWriteTokens), "写入缓存的 token"));
+  if (u.reasoning) parts.push(item("推理", fmtTokens(u.reasoningTokens), "思考/推理 token"));
+  parts.push(`<span class="usage-total">合计 ${esc(fmtTokens(u.totalTokens))} tokens</span>`);
+  if (u.costKnown) {
+    parts.push(`<span class="usage-cost">${esc(fmtCost(u.costUsd, true))}</span>`);
+  } else {
+    parts.push(`<span class="usage-cost dim" title="该 harness 的记录里没有费用字段（如 magpie 只记 token 与状态）">费用未知</span>`);
+  }
+  if (u.failedCalls) {
+    parts.push(item("失败调用", String(u.failedCalls), "非 200 的模型调用（限流 429 / 超时 499 等）"));
+  }
+
+  // 口径说明：codex 的 token_count 带两个块，必须取「本次调用增量」而不是累计计数器——
+  // 用户看到说明才知道这个数字是怎么来的（也解释了为什么 codex 的输入远大于输出）。
+  const notes = {
+    codex: ["逐次调用相加", "该 harness 的 token_count 每条记录带「本次调用」与「文件累计」两个块；这里取本次调用逐条相加（累计块会随会话恢复继承上游基数，不可相加）"],
+    hermes: ["按模型汇总相加", "每条记录是「会话 × 模型」的合计行，相加即会话总用量"],
+    claude: ["会话汇总", "每个会话一条 cost-state 记录，含分模型明细"],
+    pi: ["逐次调用相加", "每条记录是一次模型调用的用量"],
+    magpie: ["逐次调用相加", "每条记录是一次模型调用的用量（含状态，可看限流/失败）"],
+  };
+  const [noteLabel, noteTitle] = notes[state.currentHarness] || ["逐条相加", "每条记录相加"];
+  const note = `<span class="usage-note" title="${esc(noteTitle)}">${esc(noteLabel)}</span>`;
+
+  let models = "";
+  if (u.models && u.models.length > 1) {
+    const rows = u.models
+      .map((m) => `<span class="usage-model">${esc(m.model)} <span class="dim">${esc(fmtTokens(m.totalTokens))}</span></span>`)
+      .join("");
+    models = `<div class="usage-models" title="分模型用量">${rows}</div>`;
+  }
+
+  const recNote = u.skipped
+    ? ` · ${u.skipped} 条记录无法解析（meta 为空/损坏），未计入`
+    : "";
+
+  bar.innerHTML = `<div class="usage-line">${parts.join("")}${note}</div>${models}
+    <div class="usage-sub">${u.records} 条用量记录${esc(recNote)}</div>`;
+}
+
 // ---- 渲染：会话 ----
 function renderSessions() {
   const ul = $("sessionList");
@@ -148,6 +230,7 @@ function renderSessions() {
 // ---- 渲染：时间线 ----
 function renderTimeline() {
   const box = $("timeline");
+  renderUsageBar();
   if (!state.currentSession) {
     box.innerHTML = `<div class="timeline-empty">选择左侧的 harness 和会话，查看每一步的完整内容</div>`;
     $("timelineTitle").textContent = "时间线";

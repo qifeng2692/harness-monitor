@@ -18,6 +18,7 @@ import (
 	"github.com/qifeng2692/harness-monitor/internal/explain"
 	"github.com/qifeng2692/harness-monitor/internal/model"
 	"github.com/qifeng2692/harness-monitor/internal/store"
+	"github.com/qifeng2692/harness-monitor/internal/usage"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -288,6 +289,22 @@ func (a *App) ExplainSession(harness, sessionID string) ([]explain.StepExplain, 
 		})
 	}
 	return explain.ExplainAll(items), nil
+}
+
+// SessionUsage 合计某会话的用量与成本（token / 费用 / 失败调用 / 分模型明细）。
+//
+// 各家 harness 的记录口径不同（codex 是会话累计快照、hermes 是「会话×模型」汇总、
+// claude 是每会话一条 cost-state、pi/magpie 是逐次调用），合计规则集中在
+// internal/usage——本方法只做透传，避免前端各自拍脑袋相加算错。
+func (a *App) SessionUsage(harness, sessionID string) (usage.Summary, error) {
+	if a.store == nil {
+		return usage.Summary{}, fmt.Errorf("数据库未打开")
+	}
+	events, err := a.store.ListEvents(harness, sessionID)
+	if err != nil {
+		return usage.Summary{}, err
+	}
+	return usage.Summarize(harness, events), nil
 }
 
 // ---- API：对比实验台（Compare Lab） ----------------------------------------

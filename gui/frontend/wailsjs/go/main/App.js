@@ -50,6 +50,10 @@ export function Search(arg1, arg2) {
   return window['go']['main']['App']['Search'](arg1, arg2);
 }
 
+export function SessionUsage(arg1, arg2) {
+  return window['go']['main']['App']['SessionUsage'](arg1, arg2);
+}
+
 export function StartCompare(arg1, arg2) {
   return window['go']['main']['App']['StartCompare'](arg1, arg2);
 }

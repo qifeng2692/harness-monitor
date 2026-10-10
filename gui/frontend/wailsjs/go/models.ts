@@ -86,6 +86,11 @@ export namespace explain {
 	    visible: string;
 	    why: string;
 	    nextHint: string;
+	    round: number;
+	    toolKey: string;
+	    callSeq: number;
+	    resultSeq: number;
+	    waitNote: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new StepExplain(source);
@@ -99,6 +104,11 @@ export namespace explain {
 	        this.visible = source["visible"];
 	        this.why = source["why"];
 	        this.nextHint = source["nextHint"];
+	        this.round = source["round"];
+	        this.toolKey = source["toolKey"];
+	        this.callSeq = source["callSeq"];
+	        this.resultSeq = source["resultSeq"];
+	        this.waitNote = source["waitNote"];
 	    }
 	}
 
@@ -207,6 +217,91 @@ export namespace main {
 	        this.lastTime = source["lastTime"];
 	        this.title = source["title"];
 	    }
+	}
+
+}
+
+export namespace usage {
+	
+	export class ModelUsage {
+	    model: string;
+	    records: number;
+	    inputTokens: number;
+	    outputTokens: number;
+	    cacheReadTokens: number;
+	    cacheWriteTokens: number;
+	    reasoningTokens: number;
+	    totalTokens: number;
+	    costUsd: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelUsage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	        this.records = source["records"];
+	        this.inputTokens = source["inputTokens"];
+	        this.outputTokens = source["outputTokens"];
+	        this.cacheReadTokens = source["cacheReadTokens"];
+	        this.cacheWriteTokens = source["cacheWriteTokens"];
+	        this.reasoningTokens = source["reasoningTokens"];
+	        this.totalTokens = source["totalTokens"];
+	        this.costUsd = source["costUsd"];
+	    }
+	}
+	export class Summary {
+	    records: number;
+	    skipped: number;
+	    inputTokens: number;
+	    outputTokens: number;
+	    cacheReadTokens: number;
+	    cacheWriteTokens: number;
+	    reasoningTokens: number;
+	    totalTokens: number;
+	    costUsd: number;
+	    costKnown: boolean;
+	    failedCalls: number;
+	    models: ModelUsage[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Summary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.records = source["records"];
+	        this.skipped = source["skipped"];
+	        this.inputTokens = source["inputTokens"];
+	        this.outputTokens = source["outputTokens"];
+	        this.cacheReadTokens = source["cacheReadTokens"];
+	        this.cacheWriteTokens = source["cacheWriteTokens"];
+	        this.reasoningTokens = source["reasoningTokens"];
+	        this.totalTokens = source["totalTokens"];
+	        this.costUsd = source["costUsd"];
+	        this.costKnown = source["costKnown"];
+	        this.failedCalls = source["failedCalls"];
+	        this.models = this.convertValues(source["models"], ModelUsage);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }

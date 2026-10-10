@@ -25,6 +25,7 @@ Hermes · Codex · Claude Code · pi（另采集 magpie 网关用量）
 - **工具往返配对**：一次工具调用的「请求」和「返回」常常不相邻（实测本机库里 codex 有 1198 次、hermes 709 次、pi 189 次的结果落在调用之后 5 步以上，最长一次隔了 11685 步）。配对后每步会标出「第 N 轮工具往返」，展开即见「返回在哪 / 调用在哪」并一键跳转对齐；工具结果还能从调用侧补回真名（此前 25% 的工具结果只显示「未知工具」）
 
   ![工具往返配对](docs/screenshots/tool-pairing.png)
+- **会话用量 / 成本合计**：时间线顶部一条用量条，给出该会话的输入 / 输出 / 缓存 / 推理 token、合计、费用、失败调用数与分模型明细。五家的记录形态不同（codex 的累计计数器按 rollout 文件重置且会话恢复时会继承上游基数、hermes 是「会话×模型」汇总、claude 是每会话一条 cost-state、pi/magpie 是逐次调用），合计规则集中在 `internal/usage`；费用字段缺失时显示「费用未知」而不是 `$0`（「没报」不等于「免费」）
 - 搜索所有内容原文（回车搜索，命中后跳转定位）
 - LIVE 跟随（增量采集 + 自动刷新）、回放（逐步查看）、按类型过滤
 
@@ -71,7 +72,8 @@ cmd/hm             CLI 入口（采集/查询）
 gui/               Wails v2 桌面应用（绑定层 + 静态前端）
 internal/collect   五路采集器（增量续读、幂等入库）
 internal/store     SQLite 存储（事件库 + 对比实验台三表）
-internal/explain   自然语言步骤说明生成器
+internal/explain   自然语言步骤说明生成器（含工具往返配对）
+internal/usage     会话用量/成本合计（五家记录形态归一）
 internal/runner    四家 harness 非交互运行器 + 输出解析器
 internal/compare   对比实验台编排（并发运行、增量写库、停止）
 ```
