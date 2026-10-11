@@ -15,7 +15,9 @@
 //	  {type:toolCall,id,name,arguments}             → tool.call（content=arguments 对象序列化；meta: tool_name/call_id）
 //	  message.usage（每次调用的 token/费用）        → llm.usage（与上面的 llm.response 同属该行，追加为末位事件）
 //	message role=toolResult（{toolCallId,toolName,content[{type:text,text}]}）→ tool.result
-//	  （content=拼接 text 全文；meta: tool_name/call_id；parent_id=toolCallId）
+//	  （content=拼接 text 全文；meta: tool_name/call_id；parent_id=toolCallId；
+//	   isError=true 时 meta.is_error=true）
+//	message role=assistant 且 stopReason=error                 → error（模型调用失败）
 //	{type:compaction,summary}                       → compaction（title="context compaction"；content=summary）
 //	其余顶层 type（thinking_level_change/custom_message/custom/session_info/context_edit） → 不映射，计数
 //
@@ -280,13 +282,16 @@ type piRecord struct {
 }
 
 type piMessage struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content"` // 字符串（system）或块数组
-	ToolCallID string          `json:"toolCallId"`
-	ToolName   string          `json:"toolName"`
-	Model      string          `json:"model"`
-	Provider   string          `json:"provider"`
-	Usage      *piUsage        `json:"usage"`
+	Role         string          `json:"role"`
+	Content      json.RawMessage `json:"content"` // 字符串（system）或块数组
+	ToolCallID   string          `json:"toolCallId"`
+	ToolName     string          `json:"toolName"`
+	Model        string          `json:"model"`
+	Provider     string          `json:"provider"`
+	Usage        *piUsage        `json:"usage"`
+	StopReason   string          `json:"stopReason"`   // toolUse|stop|length|aborted|error
+	ErrorMessage string          `json:"errorMessage"` // stopReason=error 时的原因（实测 "terminated"）
+	IsError      *bool           `json:"isError"`      // toolResult：这次工具调用是否失败
 }
 
 // piUsage 是 assistant 消息上的逐次调用用量（实测字段名见 docs/DATA-FORMATS.md §4）。
@@ -402,16 +407,26 @@ func (r *piRun) messageEvents(rec piRecord, sid string, when time.Time) []model.
 		if u := r.usageEvent(rec, sid, when); u != nil {
 			events = append(events, *u)
 		}
+		// stopReason=error：这次模型调用失败（实测 196 条，多为供应商侧掐断）。
+		// 此前只体现为空 content 的 assistant 行被静默跳过——用户看不出「这里断了」。
+		if e := r.assistantErrorEvent(rec, sid, when); e != nil {
+			events = append(events, *e)
+		}
 		return events
 	case "toolResult":
+		meta := map[string]any{
+			"tool_name": rec.Message.ToolName,
+			"call_id":   rec.Message.ToolCallID,
+		}
+		// isError=true（实测 988 条，多为命令退出码非 0）：如实标记，不静默当成正常结果。
+		if rec.Message.IsError != nil && *rec.Message.IsError {
+			meta["is_error"] = true
+		}
 		return []model.Event{{
 			Harness: piHarness, SessionID: sid, Time: when,
 			Kind: model.KindToolResult, Title: "tool result",
-			Content: piContentText(rec.Message.Content),
-			Meta: piMeta(map[string]any{
-				"tool_name": rec.Message.ToolName,
-				"call_id":   rec.Message.ToolCallID,
-			}),
+			Content:  piContentText(rec.Message.Content),
+			Meta:     piMeta(meta),
 			ParentID: rec.Message.ToolCallID,
 		}}
 	default:
@@ -532,6 +547,72 @@ func (r *piRun) usageEvent(rec piRecord, sid string, when time.Time) *model.Even
 		Title:     title,
 		Meta:      piMeta(meta),
 	}
+}
+
+// assistantErrorEvent 把 stopReason=error 的 assistant 消息转成一条 error 事件；
+// 其余 stopReason（toolUse/stop/length/aborted）返回 nil。
+//
+// 为什么需要：实测 196 条 stopReason=error（另有 13 条 errorMessage 为空），
+// 这些行的 content 是空数组 → assistantEvents 不产出任何事件 → 时间线上这一轮凭空
+// 消失，看不出「模型没答上来」。
+//
+// title 用精简原因（实测 errorMessage 常是整段 JSON/HTML 报错体，原样当标题会把
+// 列表撑爆）：能识别出 HTTP 状态码时只写状态码，否则截断；全文仍完整存在 content 里。
+func (r *piRun) assistantErrorEvent(rec piRecord, sid string, when time.Time) *model.Event {
+	if rec.Message.StopReason != "error" {
+		return nil
+	}
+	msg := rec.Message.ErrorMessage
+	title := "模型调用失败"
+	if brief := piErrorBrief(msg); brief != "" {
+		title += "：" + brief
+	}
+	return &model.Event{
+		Harness: piHarness, SessionID: sid, Time: when,
+		Kind: model.KindError, Title: title, Content: msg,
+		Meta: piMeta(map[string]any{
+			"type":        "stop_reason_error",
+			"stop_reason": rec.Message.StopReason,
+			"model":       rec.Message.Model,
+			"provider":    rec.Message.Provider,
+		}),
+	}
+}
+
+// piErrorBrief 从 errorMessage 里取一个适合当标题的短语：
+// 形如 "429: {…json…}" 或 "502 <html>…" 时只留状态码，其余截断到 40 字。
+func piErrorBrief(msg string) string {
+	s := strings.TrimSpace(msg)
+	if s == "" {
+		return ""
+	}
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	// 前缀是 HTTP 状态码（可选冒号/空格）→ 只留码，别把整段报错体当标题。
+	if code, rest := piLeadingStatus(s); code != "" {
+		if rest == "" || rest[0] == ':' || rest[0] == ' ' || rest[0] == '<' {
+			return code
+		}
+	}
+	r := []rune(s)
+	if len(r) <= 40 {
+		return s
+	}
+	return string(r[:40]) + "…"
+}
+
+// piLeadingStatus 判断字符串是否以 3 位 HTTP 状态码开头，返回状态码与其后的剩余部分。
+func piLeadingStatus(s string) (string, string) {
+	if len(s) < 3 {
+		return "", s
+	}
+	for i := 0; i < 3; i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return "", s
+		}
+	}
+	return s[:3], s[3:]
 }
 
 // ---- 入库（双上限分批） ----------------------------------------------------

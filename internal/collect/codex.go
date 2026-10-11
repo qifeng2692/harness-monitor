@@ -309,6 +309,7 @@ type codexPayload struct {
 	CliVersion    string `json:"cli_version"`
 	ModelProvider string `json:"model_provider"`
 	TurnID        string `json:"turn_id"`
+	Reason        string `json:"reason"` // turn_aborted 的中断原因（实测 "interrupted"）
 }
 
 type codexItem struct {
@@ -490,6 +491,20 @@ func (r *codexRun) mapEventMsg(rec codexRecord, rel string, lineNo int, sid stri
 				"turn_id":                p.TurnID,
 				"duration_ms":            p.DurationMs,
 				"time_to_first_token_ms": p.TimeToFirstTokenMs,
+			}),
+			SourceKey: base,
+		})
+
+	case "turn_aborted":
+		// 回合被中断（用户打断 / 客户端退出 / 流被掐断）——此前落进 default 被当作
+		// 「未映射类型」丢弃，时间线上看不出「这一次没跑完」。实测本机 17 条。
+		r.emit(model.Event{
+			Harness: codexHarness, SessionID: sid, Time: when,
+			Kind: model.KindError, Title: "回合被中断", Content: p.Reason,
+			Meta: codexMeta(map[string]any{
+				"type":    "turn_aborted",
+				"turn_id": p.TurnID,
+				"reason":  p.Reason,
 			}),
 			SourceKey: base,
 		})

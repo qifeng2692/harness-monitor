@@ -283,6 +283,18 @@ type claudeRecord struct {
 	ParentUuid  string         `json:"parentUuid"`
 	Message     *claudeMessage `json:"message"`
 
+	// 失败信号（实测两处，此前都被当作普通内容或未映射类型丢弃）：
+	//   - type=system, subtype=api_error：请求重试记录（含 502 状态码、重试次数）
+	//   - type=assistant, isApiErrorMessage=true：把网关报错当成「模型回复」的合成行
+	Level             string          `json:"level"`
+	Subtype           string          `json:"subtype"`
+	Error             json.RawMessage `json:"error"`
+	RetryAttempt      *float64        `json:"retryAttempt"`
+	MaxRetries        *float64        `json:"maxRetries"`
+	RetrySource       string          `json:"source"`
+	IsAPIMessageError bool            `json:"isApiErrorMessage"`
+	APIErrorStatus    *float64        `json:"apiErrorStatus"`
+
 	// cost-state 行（每文件一条，写在会话末尾）：会话级用量与费用汇总。
 	// 实测字段见 docs/DATA-FORMATS.md §3。
 	TotalCostUSD  *float64                    `json:"totalCostUSD"`
@@ -335,6 +347,9 @@ func (r *claudeRun) mapRecord(rec claudeRecord, rel string, lineNo int, sid stri
 		// 会话级用量汇总：库里 claude 此前一条 llm.usage 都没有（实测 0 条），
 		// 而文件末尾这行带着完整 token/费用账。不采它 = 这个 harness 的成本不可见。
 		events = r.costStateEvents(rec, sid, when)
+	case "system":
+		// api_error 重试记录（实测 28 条，均为网关 502）。
+		events = r.systemEvents(rec, sid, when)
 	default:
 		r.unmapped[rec.Type]++
 		return
@@ -418,7 +433,14 @@ func (r *claudeRun) userEvents(rec claudeRecord, sid string, when time.Time) []m
 //	{thinking}  → llm.reasoning
 //	{text}      → llm.response
 //	{tool_use}  → tool.call（content=参数 JSON 原文）
+//
+// 例外：isApiErrorMessage=true 的行不是模型回复，而是网关把报错文本当成回复写下的
+// 合成行（实测 message.model="<synthetic>"）。当普通回复采会污染「模型说了什么」，
+// 因此改采为 error 事件，如实标出这次调用失败了。
 func (r *claudeRun) assistantEvents(rec claudeRecord, sid string, when time.Time) []model.Event {
+	if rec.IsAPIMessageError {
+		return []model.Event{r.apiErrorEvent(rec, sid, when, "assistant")}
+	}
 	if rec.Message == nil {
 		return nil
 	}
@@ -551,6 +573,100 @@ func (r *claudeRun) costStateEvents(rec claudeRecord, sid string, when time.Time
 			"total_duration_ms":     rec.TotalDuration,
 		}),
 	}}
+}
+
+// systemEvents 处理 type=="system" 的行：只认 subtype=="api_error"（请求失败重试记录），
+// 其余 system 行（如 hook 输出）按未映射计数——它们不是失败，不该进错误条目。
+//
+// 实测 api_error 行的 error 字段是对象：{message, status, formatted, ...}；
+// retryAttempt/maxRetries 说明这是第几次重试、最多重试几次。
+func (r *claudeRun) systemEvents(rec claudeRecord, sid string, when time.Time) []model.Event {
+	if rec.Subtype != "api_error" {
+		r.unmapped["system/"+rec.Subtype]++
+		return nil
+	}
+	return []model.Event{r.apiErrorEvent(rec, sid, when, "system")}
+}
+
+// apiErrorEvent 把 claude 的失败信号统一成一条 error 事件（system/api_error 与
+// assistant/isApiErrorMessage 两种来源共用）。content 放可读的报错原文，meta 保留结构化字段。
+func (r *claudeRun) apiErrorEvent(rec claudeRecord, sid string, when time.Time, source string) model.Event {
+	msg, status := claudeErrorInfo(rec.Error)
+	if msg == "" {
+		msg = claudeFirstText(rec.Message)
+	}
+	if status == 0 && rec.APIErrorStatus != nil {
+		status = int(*rec.APIErrorStatus)
+	}
+	meta := map[string]any{"type": "api_error", "source": source}
+	if status != 0 {
+		meta["status"] = status
+	}
+	if rec.RetryAttempt != nil {
+		meta["retry_attempt"] = *rec.RetryAttempt
+	}
+	if rec.MaxRetries != nil {
+		meta["max_retries"] = *rec.MaxRetries
+	}
+	title := "请求失败"
+	if status != 0 {
+		title = fmt.Sprintf("请求失败（HTTP %d）", status)
+	}
+	return model.Event{
+		Harness: claudeHarness, SessionID: sid, Time: when,
+		Kind: model.KindError, Title: title, Content: msg,
+		Meta: claudeMeta(meta),
+	}
+}
+
+// claudeErrorInfo 从 error 字段解析出可读消息与 HTTP 状态码。
+// 实测形态是对象 {"message":"502 status code (no body)","status":502,...}；
+// 兼容字符串形态（此时无状态码）。
+func claudeErrorInfo(raw json.RawMessage) (string, int) {
+	t := bytes.TrimSpace(raw)
+	if len(t) == 0 || string(t) == "null" {
+		return "", 0
+	}
+	if t[0] == '"' {
+		var s string
+		if json.Unmarshal(t, &s) == nil {
+			return s, 0
+		}
+		return string(t), 0
+	}
+	var obj struct {
+		Message string   `json:"message"`
+		Status  *float64 `json:"status"`
+	}
+	if json.Unmarshal(t, &obj) != nil {
+		return string(t), 0
+	}
+	status := 0
+	if obj.Status != nil {
+		status = int(*obj.Status)
+	}
+	return obj.Message, status
+}
+
+// claudeFirstText 取消息里第一个 text 块（api_error 合成行的报错文本就在这儿）。
+func claudeFirstText(m *claudeMessage) string {
+	if m == nil {
+		return ""
+	}
+	t := bytes.TrimSpace(m.Content)
+	if len(t) == 0 || t[0] != '[' {
+		return ""
+	}
+	var blocks []claudeBlock
+	if json.Unmarshal(t, &blocks) != nil {
+		return ""
+	}
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			return b.Text
+		}
+	}
+	return ""
 }
 
 // ---- 入库（双上限分批） ----------------------------------------------------

@@ -395,10 +395,7 @@ func hermesMessages(db *sql.DB, eb *eventBuffer, since int64) (scanned, bad int,
 			}
 
 		case "tool":
-			meta, err := json.Marshal(map[string]any{
-				"tool_name":    toolName.String,
-				"tool_call_id": toolCallID.String,
-			})
+			meta, err := json.Marshal(hermesToolResultMeta(toolName.String, toolCallID.String, content.String))
 			if err != nil {
 				return scanned, bad, lastID, err
 			}
@@ -476,6 +473,102 @@ func rawArgsToString(raw json.RawMessage) string {
 		}
 	}
 	return string(raw)
+}
+
+// hermesToolResultMeta 构造 hermes 工具结果事件的 meta，并尽力从结果正文里读出
+// 「这次调用是不是失败了」。
+//
+// 为什么要读：hermes 的 tool 行 content 是工具返回的 JSON（如
+// {"output":"...","exit_code":1,"error":null}），失败信号全在里面，而 meta 此前只有
+// 工具名与 call_id —— 一次失败的命令在时间线上与成功的长得一模一样。
+//
+// 实测本机 23021 条 tool 行：exit_code 非 0 的 862 条、带非空 error 字段的 496 条、
+// 非 JSON 正文 1200 条。只认结构化的两个信号（exit_code 非 0 / error 非空），
+// 不做文本猜测——猜错会把正常输出标成失败。
+func hermesToolResultMeta(toolName, callID, content string) map[string]any {
+	meta := map[string]any{
+		"tool_name":    toolName,
+		"tool_call_id": callID,
+	}
+	if code, ok := hermesExitCode(content); ok {
+		meta["exit_code"] = code
+		meta["is_error"] = code != 0
+	} else if errText, ok := hermesErrorField(content); ok {
+		meta["is_error"] = true
+		meta["error"] = errText
+	}
+	return meta
+}
+
+// hermesExitCode 从工具结果的 JSON 正文里取 exit_code；没有该字段或正文不是 JSON 时
+// 返回 ok=false（不是失败，只是没有可判定的信号）。
+func hermesExitCode(content string) (int, bool) {
+	obj, ok := hermesResultObject(content)
+	if !ok {
+		return 0, false
+	}
+	v, present := obj["exit_code"]
+	if !present {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case string:
+		code, err := strconv.Atoi(n)
+		if err != nil {
+			return 0, false
+		}
+		return code, true
+	}
+	return 0, false
+}
+
+// hermesErrorField 从工具结果的 JSON 正文里取非空的 error 字段文本。
+func hermesErrorField(content string) (string, bool) {
+	obj, ok := hermesResultObject(content)
+	if !ok {
+		return "", false
+	}
+	v, present := obj["error"]
+	if !present || v == nil {
+		return "", false
+	}
+	switch t := v.(type) {
+	case string:
+		if t == "" {
+			return "", false
+		}
+		return t, true
+	case bool:
+		if !t {
+			return "", false
+		}
+		return "true", true
+	default:
+		b, err := json.Marshal(t)
+		if err != nil {
+			return "", false
+		}
+		s := string(b)
+		if s == "" || s == "{}" || s == "[]" {
+			return "", false
+		}
+		return s, true
+	}
+}
+
+// hermesResultObject 把工具结果正文解析成 JSON 对象；不是对象返回 ok=false。
+func hermesResultObject(content string) (map[string]any, bool) {
+	s := strings.TrimSpace(content)
+	if s == "" || s[0] != '{' {
+		return nil, false
+	}
+	var obj map[string]any
+	if json.Unmarshal([]byte(s), &obj) != nil || len(obj) == 0 {
+		return nil, false
+	}
+	return obj, true
 }
 
 // ---- session_model_usage --------------------------------------------------

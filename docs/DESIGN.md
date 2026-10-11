@@ -180,6 +180,46 @@ codex 是唯一有坑的一家。它的 `event_msg/token_count` 事件同时带�
 magpie 7 / claude 12 / pi 205）逐项一致（token 分项、合计、失败数、费用、跳过数）。
 命令行核对工具：`go run ./cmd/hmusagecheck <harness> [session-id]`。
 
+## 失败 / 异常可见（2026-10-11 实测）
+
+失败此前在库和界面里都是不可见的：`error` 这个 kind 从规范到样式（TUI 红色、
+GUI 的「错误」筛选与 `.kind-error`）全都存在，但**没有任何采集器产出过一条 error 事件**
+——本机 20 万条事件里 error 为 0。更隐蔽的是「有失败但没标记」：一次退出码 1 的命令
+在时间线上与成功的长得一模一样。
+
+各类失败信号分散在各家的记录里，且都藏在**结构化字段**而非正文文本中：
+
+| harness | 信号 | 字段位置 | 本机实测 |
+|---|---|---|---|
+| codex | `turn_aborted`（回合被中断） | `event_msg.payload.type` + `reason` | 17 条（此前落进 default 当「未映射类型」丢弃） |
+| claude | 接口失败重试记录 | `type=system, subtype=api_error`（含 `error.status`/`retryAttempt`） | 28 条（此前未映射） |
+| claude | 网关报错被写成「模型回复」 | `type=assistant, isApiErrorMessage=true`（`model="<synthetic>"`） | 2 条（此前当正常回复采进 `llm.response`） |
+| pi | 模型调用失败 | `message.stopReason=error` + `errorMessage` | 196 条（此前 content 为空数组 → 静默跳过，这一轮凭空消失） |
+| hermes | 工具调用失败 | 工具结果正文 JSON 的 `exit_code` 非 0 / 非空 `error` | 1358 条 |
+| pi | 工具调用失败 | `message.isError=true` | 995 条 |
+
+落地方式：
+
+- **采集层**把上述信号归一为 `error` 事件（`meta.type` = `turn_aborted` / `api_error` /
+  `stop_reason_error`）或写进工具结果的 `meta.is_error`（附带 `exit_code`）；
+- **说明层**（`internal/explain`）把 `meta.type` 翻译成「失败在哪一层、意味着什么」，
+  并对标记为失败的工具结果改说「执行失败」，带出退出码；
+- **界面层**按 `kind=error` 与 `meta.is_error` 在步骤卡片上打红色徽标（「错误」/
+  「失败·退出码 1」），筛选器选「错误」即可只看失败步骤。
+
+**不做正文猜测**：只认结构化字段。用文本关键词扫正文会把正常输出里出现的 "error"
+误判成失败（hermes 有 210 条 assistant 正文含 error 字样，绝大多数是正常讨论）。
+
+**pi 报错标题要收敛**：`errorMessage` 实测常是整段 JSON / HTML 报错体（429 限流说明、
+502 网关页），原样当标题会把列表撑爆——能识别出 HTTP 状态码时标题只写状态码
+（「模型调用失败：429」），全文仍完整存在 content 里。
+
+**验证**：新增 8 条单测（各 harness 的失败信号 + 正常路径不被误标 + 标题收敛）；
+另以本机真实数据源采到临时库（**不碰仓库 `data/`**）交叉验证：error 事件 244 条
+（claude 30 / codex 17 / pi 197）、失败标记 2353 条（hermes 1358 / pi 995）；
+再用 Node 把 GUI 真正发布的 `app.js` 里的判定函数抽出来喂全库 **201667 条真实事件**：
+判定 2597 条、漏判 0、假阳性 0。命令行核对工具：`go run ./cmd/hmerrcheck <临时目录>`。
+
 ## 工具调用配对（call ↔ result，2026-10-08 实测）
 
 一次工具调用的「请求」与「返回」在时间线上经常不相邻——实测本机库（`data/hm.db`）：

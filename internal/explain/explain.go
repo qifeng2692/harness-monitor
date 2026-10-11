@@ -161,6 +161,12 @@ func explainOne(e, prev, next *Event, toolOverride string) StepExplain {
 		ex.To = "发送给模型（作为它继续思考的素材）"
 		ex.Visible = "否——工具原始结果默认不直接显示给用户（用户只看模型的总结，除非展开工具详情）。"
 		ex.Why = "模型拿到结果后要继续判断：结果够不够？够就直接回复用户，不够就再调工具（所以下一步常见「模型思考」或直接「模型回复」）。"
+		// 这次调用失败时如实说明——失败的结果和成功的在正文里长得差不多，
+		// 只有 meta 里的结构化标记（exit_code 非 0 / is_error）能区分。
+		if note := toolFailureNote(e); note != "" {
+			ex.Summary = fmt.Sprintf("工具「%s」执行失败，返回的是错误信息。", tool)
+			ex.Why = note + " " + ex.Why
+		}
 
 	case "llm.usage":
 		ex.Summary = "系统记录了一次模型调用的用量（token 数/耗时/状态）。"
@@ -194,11 +200,14 @@ func explainOne(e, prev, next *Event, toolOverride string) StepExplain {
 		ex.Why = "压缩后模型可以继续对话而不超出容量限制。"
 
 	case "error":
-		ex.Summary = "这一步出错了。"
-		ex.From = "来自失败的那次操作"
-		ex.To = "错误信息上报（可能触发重试或中止）"
-		ex.Visible = "视情况——严重错误会显示给用户，轻微错误可能自动重试后不显示。"
-		ex.Why = "错误可能让流程中断，也可能被自动恢复（看下一条事件是继续还是终止）。"
+		// 失败步骤：说清楚「失败的是什么、为什么、算不算致命」。
+		// title/meta 由各采集器给出（codex 回合被中断 / claude 请求失败 HTTP 502 /
+		// pi 模型调用失败 terminated），这里把结构化字段翻译成自然语言。
+		ex.Summary = errorSummary(e)
+		ex.From = "来自失败的那次操作" + backRef(prev)
+		ex.To = "记入会话档案（模型可能据此重试或放弃这一轮）"
+		ex.Visible = "视情况——网关/供应商侧的报错通常不直接展示给用户，用户只看到「没有回复」或重试提示。"
+		ex.Why = errorWhy(e)
 
 	case "session.meta":
 		ex.Summary = "会话的配置信息发生了变化（比如切换了模型）。"
@@ -217,15 +226,83 @@ func explainOne(e, prev, next *Event, toolOverride string) StepExplain {
 
 	// 下一步预告（衔接）
 	if next != nil {
-		ex.NextHint = fmt.Sprintf("下一步是「%s」", kindLabel(next.Kind))
-		if next.Kind == "tool.call" {
-			ex.NextHint += fmt.Sprintf("（调用 %s）", toolNameOf(next))
+		if next.Kind == "error" && e.Kind == "error" {
+			// 重试过程会连续出现多条失败记录——说「下一步是「错误」」等于没说。
+			ex.NextHint = "下一步还是一条失败记录（重试过程中会连续出现多条）。"
+		} else {
+			ex.NextHint = fmt.Sprintf("下一步是「%s」", kindLabel(next.Kind))
+			if next.Kind == "tool.call" {
+				ex.NextHint += fmt.Sprintf("（调用 %s）", toolNameOf(next))
+			}
+			ex.NextHint += "。"
 		}
-		ex.NextHint += "。"
 	} else {
 		ex.NextHint = "这是该会话的最后一步。"
 	}
 	return ex
+}
+
+// errorSummary 把 error 事件的标题与结构化字段拼成一句人话。
+//
+// 各采集器的 title 已带上下文（「回合被中断」/「请求失败（HTTP 502）」/「模型调用失败：429」），
+// 这里在其后补上「这意味着什么」，避免只说「出错了」而没说清失败在哪一层，
+// 也不重复 title 已经说过的话。
+func errorSummary(e *Event) string {
+	what := e.Title
+	if what == "" {
+		what = "操作失败"
+	}
+	switch errorType(e) {
+	case "turn_aborted":
+		return what + "——用户打断、客户端退出或连接被掐断，这一轮没有跑完。"
+	case "api_error":
+		return what + "——请求没能送达或对方返回了错误，系统可能已自动重试。"
+	case "stop_reason_error":
+		return what + "——模型这次没有给出结果，调用在中途失败，这一轮的产出是空的。"
+	default:
+		return "这一步出错了：" + what + "。"
+	}
+}
+
+// errorWhy 说明这次失败对后续流程意味着什么（不夸大也不轻描淡写）。
+func errorWhy(e *Event) string {
+	switch errorType(e) {
+	case "turn_aborted":
+		return "回合被中断后，这一轮不会再有后续步骤（没有模型回复，也没有工具调用）；用户的下一条消息会开启新的一轮。"
+	case "api_error":
+		return "接口失败后系统通常会自动重试（见 meta 里的重试次数与上限）：重试成功则流程继续，重试用尽则这一轮到此为止。"
+	case "stop_reason_error":
+		return "模型调用失败意味着这一步拿不到任何内容，流程要么重试要么直接中断——看下一条事件是继续还是终止。"
+	default:
+		return "错误可能让流程中断，也可能被自动恢复（看下一条事件是继续还是终止）。"
+	}
+}
+
+// errorType 取错误的结构化类型（各采集器写在 meta.type）。
+func errorType(e *Event) string {
+	m := metaMap(e.Meta)
+	return str(m["type"])
+}
+
+// toolFailureNote 判断工具结果是否标记为失败，返回一句可拼进说明的提示；非失败返回空。
+//
+// 依据是采集器写入 meta 的结构化信号（hermes 的 exit_code 非 0 / 非空 error、
+// pi 的 is_error），不做正文文本猜测——猜错会把正常输出说成失败。
+func toolFailureNote(e *Event) string {
+	m := metaMap(e.Meta)
+	if m == nil {
+		return ""
+	}
+	if isErr, ok := m["is_error"].(bool); ok {
+		if !isErr {
+			return ""
+		}
+		if code, ok := m["exit_code"]; ok {
+			return fmt.Sprintf("注意：这次调用失败了（退出码 %s），返回的是错误输出而不是有效结果。", str(code))
+		}
+		return "注意：这次调用失败了，返回的是错误输出而不是有效结果。"
+	}
+	return ""
 }
 
 // kindLabel 是步骤类型的中文名。

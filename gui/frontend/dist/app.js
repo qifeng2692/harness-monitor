@@ -20,6 +20,7 @@ const state = {
   expanded: new Set(), // 已展开步骤的 seq
   searchQuery: "",
   view: "monitor", // monitor | compare
+  metaCache: new Map(), // seq -> 解析后的 meta 对象（失败标记等要按 meta 判定，避免重复 JSON.parse）
 };
 
 // ---- 工具 ----
@@ -89,6 +90,7 @@ async function selectHarness(name) {
 async function selectSession(sessionId) {
   state.currentSession = sessionId;
   state.expanded.clear();
+  state.metaCache.clear();
   state.replay = false;
   renderSessions();
   try {
@@ -259,6 +261,36 @@ function renderTimeline() {
   if (state.replay) highlightReplay();
 }
 
+// parseMeta 解析步骤的 meta JSON（带缓存）；解析失败返回 {}。
+// 失败标记（is_error / exit_code / error.type）都藏在 meta 里，渲染时按它判定。
+function parseMeta(e, ctx) {
+  const cache = (ctx && ctx.metaCache) || state.metaCache;
+  if (cache.has(e.seq)) return cache.get(e.seq);
+  let obj = {};
+  if (e.meta) {
+    try { obj = JSON.parse(e.meta) || {}; } catch (_) { obj = {}; }
+  }
+  cache.set(e.seq, obj);
+  return obj;
+}
+
+// stepIssue 判断一个步骤是否是「失败/异常」，返回徽标文字或 ""。
+//
+// 两个失败信号（都来自采集器写入 meta 的结构化字段，不做正文猜测）：
+//   kind=error           —— 采集器已判定失败（回合被中断 / 接口失败 / 模型调用失败）
+//   meta.is_error=true   —— 工具调用失败（hermes 退出码非 0、pi isError）
+function stepIssue(e, ctx) {
+  if (e.kind === "error") return "错误";
+  const m = parseMeta(e, ctx);
+  if (m.is_error === true) {
+    return m.exit_code !== undefined && m.exit_code !== null ? `失败·退出码 ${m.exit_code}` : "失败";
+  }
+  if (e.kind === "tool.call" || e.kind === "tool.result") {
+    if (typeof m.status === "number" && m.status !== 0 && m.status !== 200) return `失败·HTTP ${m.status}`;
+  }
+  return "";
+}
+
 // renderStep 渲染一个步骤卡片。ctx = {events, explains, expanded}——主监控与对比实验台
 // 共用同一套样式与交互（展开/收起），只是各自持有独立的事件流与展开集合。
 function renderStep(e, ctx) {
@@ -278,11 +310,19 @@ function renderStep(e, ctx) {
     roundBadge = `<span class="step-round" title="第 ${ex.round} 轮工具往返 · 配对键 ${esc(ex.toolKey || "")}">第${ex.round}轮</span>`;
   }
 
+  // 失败徽标：失败的步骤此前与成功的长得一模一样（工具失败只体现在正文里），
+  // 这里按 meta 的结构化标记在卡片上直接标出来，扫一眼就能发现哪一步断了。
+  const issue = stepIssue(e, ctx);
+  const issueBadge = issue
+    ? `<span class="step-issue" title="这一步失败/异常（依据 meta 的 is_error / exit_code / type 字段）">${esc(issue)}</span>`
+    : "";
+
   div.innerHTML = `
     <div class="step-left">
       <span class="step-time">${esc((e.time || "").slice(11) || (e.time || "").slice(0, 19))}</span>
       <span class="step-kind ${kindClass(e.kind)}">${esc(label)}</span>
       ${roundBadge}
+      ${issueBadge}
     </div>
     <div class="step-body">
       <div class="step-title">${esc(e.title || label)}</div>
@@ -682,6 +722,7 @@ async function loadRun(runID) {
       events: prev ? prev.events : [],
       explains: prev ? prev.explains : [],
       expanded: prev ? prev.expanded : new Set(),
+      metaCache: prev ? prev.metaCache : new Map(),
     };
   }
 
