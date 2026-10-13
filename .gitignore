@@ -19,3 +19,6 @@ bin/hm-boot.log
 # GUI build output
 gui/build/bin/
 gui/data/
+
+# hm export 输出（本地导出产物，不入库）
+/exports/

@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/qifeng2692/harness-monitor/internal/collect"
+	"github.com/qifeng2692/harness-monitor/internal/export"
+	"github.com/qifeng2692/harness-monitor/internal/model"
 	"github.com/qifeng2692/harness-monitor/internal/store"
 	"github.com/qifeng2692/harness-monitor/internal/tui"
 )
@@ -119,6 +121,8 @@ func run(args []string) error {
 		return runLs(args[1:])
 	case "show":
 		return runShow(args[1:])
+	case "export":
+		return runExport(args[1:])
 	case "tui":
 		return runTui()
 	case "version":
@@ -146,6 +150,8 @@ func printUsage() {
       --harness <name>       只列出指定 harness 的会话
   hm show <harness> <sid>    打印某会话的时间线
       --full                 打印内容全文（默认截断到 120 字符）
+  hm export <harness> <sid>  把某会话导出为 Markdown 文件（含每步内容与说明书）
+      -o <path>              输出文件路径（默认 exports/<harness>-<sid前8位>.md）
   hm tui                     启动 TUI（三级导航）
   hm version                 打印版本
 `)
@@ -349,6 +355,85 @@ func runShow(args []string) error {
 		}
 	}
 	return nil
+}
+
+func runExport(args []string) error {
+	outPath := ""
+	positional := []string{}
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "-o" && i+1 < len(args):
+			outPath = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "-o="):
+			outPath = strings.TrimPrefix(args[i], "-o=")
+		case args[i] == "-h" || args[i] == "--help":
+			printUsage()
+			return nil
+		default:
+			positional = append(positional, args[i])
+		}
+	}
+	if len(positional) != 2 {
+		printUsage()
+		return fmt.Errorf("export 需要两个参数：<harness> <session-id>（给了 %d 个）", len(positional))
+	}
+	harness, sessionID := positional[0], positional[1]
+
+	s, err := store.Open()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	sessions, err := s.ListSessions(harness)
+	if err != nil {
+		return err
+	}
+	var sess *model.Session
+	for i := range sessions {
+		if sessions[i].SessionID == sessionID {
+			sess = &sessions[i]
+			break
+		}
+	}
+	if sess == nil {
+		return fmt.Errorf("找不到会话：harness=%s session=%s（先 hm ls 确认）", harness, sessionID)
+	}
+	events, err := s.ListEvents(harness, sessionID)
+	if err != nil {
+		return err
+	}
+
+	doc := export.Session(harness, sess.Title, sess.FirstTime, sess.LastTime, events)
+
+	if outPath == "" {
+		id := sessionID
+		if len(id) > 8 {
+			id = id[:8]
+		}
+		outPath = filepath.Join("exports", sanitize(sanitize(harness)+"-"+id)+".md")
+	}
+	if dir := filepath.Dir(outPath); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(outPath, []byte(doc), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("已导出 %d 步 → %s\n", len(events), outPath)
+	return nil
+}
+
+// sanitize 把字符串里不适合做文件名的字符换成 -。
+func sanitize(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || strings.ContainsRune(`\/:*?"<>|`, r) {
+			return '-'
+		}
+		return r
+	}, s)
 }
 
 func runTui() error {

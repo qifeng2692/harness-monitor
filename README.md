@@ -36,6 +36,15 @@ Hermes · Codex · Claude Code · pi（另采集 magpie 网关用量）
 - 四列并列实时更新：状态徽标 / 耗时 / token 用量 / 费用 / 步骤时间线 / 最终回答
 - 运行中可「停止」；历史批次随时回看
 
+### 会话导出（CLI）
+
+把任一会话导出成自包含的 Markdown 文件——每一步含完整内容与自然语言说明书（含工具往返配对、失败标记），可直接阅读、归档或分享：
+
+```bash
+hm export <harness> <session-id>          # 输出到 exports/<harness>-<sid前8位>.md
+hm export hermes 20261005_132047_a2ca7c -o 会话.md
+```
+
 ## 数据来源
 
 各 harness 的本地会话存储（只读采集，增量续读）：
@@ -74,6 +83,7 @@ gui/               Wails v2 桌面应用（绑定层 + 静态前端）
 internal/collect   五路采集器（增量续读、幂等入库）
 internal/store     SQLite 存储（事件库 + 对比实验台三表）
 internal/explain   自然语言步骤说明生成器（含工具往返配对）
+internal/export    会话导出为 Markdown（内容 + 说明书自包含）
 internal/usage     会话用量/成本合计（五家记录形态归一）
 internal/runner    四家 harness 非交互运行器 + 输出解析器
 internal/compare   对比实验台编排（并发运行、增量写库、停止）
