@@ -31,6 +31,8 @@ export function Search(arg1:string,arg2:string):Promise<Array<main.SearchHitInfo
 
 export function SessionUsage(arg1:string,arg2:string):Promise<usage.Summary>;
 
+export function SetSessionPinned(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
 export function StartCompare(arg1:string,arg2:Array<string>):Promise<number>;
 
 export function StopRun(arg1:number):Promise<void>;

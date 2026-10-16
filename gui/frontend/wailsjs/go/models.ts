@@ -204,6 +204,7 @@ export namespace main {
 	    firstTime: string;
 	    lastTime: string;
 	    title: string;
+	    pinned: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionInfo(source);
@@ -216,6 +217,7 @@ export namespace main {
 	        this.firstTime = source["firstTime"];
 	        this.lastTime = source["lastTime"];
 	        this.title = source["title"];
+	        this.pinned = source["pinned"];
 	    }
 	}
 

@@ -92,6 +92,8 @@ type Event struct {
 
 **幂等**：`events.source_key` 建 UNIQUE 索引，由各采集器生成稳定键（如 `hermes:<session>:<msgid>`、`codex:<file>:<line>`）；重复 `collect` 不产生重复事件。
 
+**会话置顶**：`session_pins(harness, session_id, pinned_at)` 独立于 events——用户在 GUI 会话列表点 📌 写入；`ListSessions` LEFT JOIN 该表，置顶排最前（按 pinned_at 倒序），其余按最近活动倒序。清库重采不影响置顶。
+
 **存储**：SQLite `data/hm.db`（`HM_DATA_DIR` 可覆盖）。M1 内容直接存 SQLite；原始文件归档在 M2 补。
 
 ## 里程碑（M1，看板链）

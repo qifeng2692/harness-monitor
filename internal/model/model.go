@@ -46,6 +46,7 @@ type Session struct {
 	FirstTime  time.Time
 	LastTime   time.Time
 	Title      string
+	Pinned     bool // 用户置顶（session_pins 表）；置顶会话排在列表最前
 }
 
 // IngestPos 是某数据源已被消费到的位置，用于增量续读（live 跟随）。

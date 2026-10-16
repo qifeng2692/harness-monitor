@@ -219,11 +219,25 @@ function renderSessions() {
     !filter || s.sessionId.toLowerCase().includes(filter) || (s.title || "").toLowerCase().includes(filter));
   for (const s of list) {
     const li = document.createElement("li");
-    li.className = "session-item" + (s.sessionId === state.currentSession ? " selected" : "");
+    li.className = "session-item" + (s.sessionId === state.currentSession ? " selected" : "") + (s.pinned ? " pinned" : "");
     li.innerHTML = `
-      <div class="session-title">${esc(s.title || s.sessionId)}</div>
-      <div class="session-id">${esc(s.sessionId)}</div>
-      <div class="session-meta"><span>${s.eventCount} 事件</span><span>${esc((s.lastTime || "").slice(5, 16))}</span></div>`;
+      <button class="pin-btn" title="${s.pinned ? "取消置顶" : "置顶会话"}">${s.pinned ? "📌" : "·"}</button>
+      <div class="session-body">
+        <div class="session-title">${esc(s.title || s.sessionId)}</div>
+        <div class="session-id">${esc(s.sessionId)}</div>
+        <div class="session-meta"><span>${s.eventCount} 事件</span><span>${esc((s.lastTime || "").slice(5, 16))}</span></div>
+      </div>`;
+    // 📌 切换置顶；失败恢复原状态并提示（网络/库错误不应静默丢失用户操作）
+    li.querySelector(".pin-btn").onclick = async (ev) => {
+      ev.stopPropagation();
+      try {
+        await window.go.main.App.SetSessionPinned(state.currentHarness, s.sessionId, !s.pinned);
+        state.sessions = await window.go.main.App.ListSessions(state.currentHarness);
+        renderSessions();
+      } catch (e) {
+        setStatus("置顶失败: " + e);
+      }
+    };
     li.onclick = () => selectSession(s.sessionId);
     ul.appendChild(li);
   }

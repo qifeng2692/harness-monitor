@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS run_events (
 	meta     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_run_events_rhs ON run_events(run_id, harness, seq);
+-- 会话置顶：用户标记，与采集数据（events）完全隔离——清库重采不影响置顶。
+CREATE TABLE IF NOT EXISTS session_pins (
+	harness    TEXT NOT NULL,
+	session_id TEXT NOT NULL,
+	pinned_at  TEXT NOT NULL,
+	PRIMARY KEY (harness, session_id)
+);
 `
 
 // Store 包装一个 SQLite 连接。
@@ -208,21 +215,26 @@ func (s *Store) InsertEvents(events []model.Event) (inserted, skipped int, err e
 	return inserted, skipped, nil
 }
 
-// ListSessions 返回某 harness 下的会话聚合列表，按最近活动倒序。
+// ListSessions 返回某 harness 下的会话聚合列表：置顶会话排最前（按置顶时间倒序），
+// 其余按最近活动倒序。
 func (s *Store) ListSessions(harness string) ([]model.Session, error) {
 	rows, err := s.db.Query(`
-		SELECT session_id,
+		SELECT e.session_id,
 		       COUNT(*)          AS event_count,
-		       MIN(time)         AS first_time,
-		       MAX(time)         AS last_time,
+		       MIN(e.time)       AS first_time,
+		       MAX(e.time)       AS last_time,
 		       COALESCE((SELECT title FROM events t
 		                  WHERE t.harness = e.harness AND t.session_id = e.session_id
 		                    AND t.title <> ''
-		                  ORDER BY t.seq ASC LIMIT 1), '') AS title
+		                  ORDER BY t.seq ASC LIMIT 1), '') AS title,
+		       COALESCE(p.session_id <> '', 0) AS pinned,
+		       COALESCE(p.pinned_at, '')       AS pinned_at
 		  FROM events e
-		 WHERE harness = ?
-		 GROUP BY session_id
-		 ORDER BY MAX(time) DESC`, harness)
+		  LEFT JOIN session_pins p
+		    ON p.harness = e.harness AND p.session_id = e.session_id
+		 WHERE e.harness = ?
+		 GROUP BY e.session_id
+		 ORDER BY pinned DESC, pinned_at DESC, MAX(e.time) DESC`, harness)
 	if err != nil {
 		return nil, err
 	}
@@ -234,16 +246,48 @@ func (s *Store) ListSessions(harness string) ([]model.Session, error) {
 			sess        model.Session
 			first, last string
 			title       sql.NullString
+			pinned      int
+			pinnedAt    sql.NullString
 		)
-		if err := rows.Scan(&sess.SessionID, &sess.EventCount, &first, &last, &title); err != nil {
+		if err := rows.Scan(&sess.SessionID, &sess.EventCount, &first, &last, &title, &pinned, &pinnedAt); err != nil {
 			return nil, err
 		}
 		sess.FirstTime = parseTime(first)
 		sess.LastTime = parseTime(last)
 		sess.Title = title.String
+		sess.Pinned = pinned != 0
 		sessions = append(sessions, sess)
 	}
 	return sessions, rows.Err()
+}
+
+// SetSessionPinned 置顶 / 取消置顶一个会话。重复置顶/取消均幂等。
+func (s *Store) SetSessionPinned(harness, sessionID string, pinned bool) error {
+	if pinned {
+		_, err := s.db.Exec(`
+			INSERT INTO session_pins (harness, session_id, pinned_at)
+			VALUES (?, ?, ?)
+			ON CONFLICT(harness, session_id) DO UPDATE SET pinned_at = excluded.pinned_at`,
+			harness, sessionID, time.Now().UTC().Format(time.RFC3339Nano))
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM session_pins WHERE harness = ? AND session_id = ?`, harness, sessionID)
+	return err
+}
+
+// SessionPinned 返回会话当前是否被置顶。
+func (s *Store) SessionPinned(harness, sessionID string) (bool, error) {
+	var one int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM session_pins WHERE harness = ? AND session_id = ?`, harness, sessionID,
+	).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ListEvents 返回某会话的全部事件，按 seq 升序。

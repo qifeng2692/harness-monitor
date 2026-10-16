@@ -85,6 +85,7 @@ type SessionInfo struct {
 	FirstTime  string `json:"firstTime"`
 	LastTime   string `json:"lastTime"`
 	Title      string `json:"title"`
+	Pinned     bool   `json:"pinned"`
 }
 
 // EventInfo 是时间线步骤（内容全文）。
@@ -165,9 +166,29 @@ func (a *App) ListSessions(harness string) ([]SessionInfo, error) {
 			FirstTime:  fmtTime(s.FirstTime),
 			LastTime:   fmtTime(s.LastTime),
 			Title:      s.Title,
+			Pinned:     s.Pinned,
 		})
 	}
 	return out, nil
+}
+
+// SetSessionPinned 置顶 / 取消置顶会话（GUI 会话列表的 📌 按钮）。
+func (a *App) SetSessionPinned(harness, sessionID string, pinned bool) error {
+	if a.store == nil {
+		return fmt.Errorf("数据库未打开")
+	}
+	if !pinned {
+		return a.store.SetSessionPinned(harness, sessionID, false)
+	}
+	// 只允许置顶真实存在的会话（防误传空 ID 制造幽灵置顶）。
+	ok, err := a.store.HasSession(harness, sessionID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("会话不存在: %s/%s", harness, sessionID)
+	}
+	return a.store.SetSessionPinned(harness, sessionID, true)
 }
 
 // GetEvents 返回某会话的全部事件（按 seq 升序；含内容全文）。

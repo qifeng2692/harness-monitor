@@ -103,9 +103,21 @@ body {
 .session-item {
   padding: 8px 12px; cursor: pointer;
   border-bottom: 1px solid #21262d;
+  display: flex; gap: 6px; align-items: flex-start;
 }
 .session-item:hover { background: var(--bg3); }
 .session-item.selected { background: #1f6feb33; border-left: 3px solid var(--accent); padding-left: 9px; }
+.session-item.pinned .session-title { color: var(--accent); }
+.session-body { flex: 1; min-width: 0; }
+.pin-btn {
+  flex: none; width: 18px; height: 20px; margin-top: 1px;
+  background: none; border: none; cursor: pointer;
+  color: var(--fg-dim); font-size: 11px; line-height: 20px; padding: 0;
+  opacity: 0.35;
+}
+.session-item:hover .pin-btn { opacity: 1; }
+.pin-btn:hover { opacity: 1; transform: scale(1.15); }
+.session-item.pinned .pin-btn { opacity: 1; }
 .session-title { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-id { color: var(--fg-dim); font-size: 11px; font-family: var(--mono); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-meta { color: var(--fg-dim); font-size: 11px; margin-top: 2px; display: flex; gap: 10px; }

@@ -54,6 +54,10 @@ export function SessionUsage(arg1, arg2) {
   return window['go']['main']['App']['SessionUsage'](arg1, arg2);
 }
 
+export function SetSessionPinned(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetSessionPinned'](arg1, arg2, arg3);
+}
+
 export function StartCompare(arg1, arg2) {
   return window['go']['main']['App']['StartCompare'](arg1, arg2);
 }
