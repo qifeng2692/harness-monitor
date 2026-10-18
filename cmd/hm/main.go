@@ -1,6 +1,6 @@
 // Command hm 是 harness-monitor 的 CLI 入口。
 //
-// 子命令：collect / ls / show / version / tui。
+// 子命令：collect / ls / show / export / search / version / tui。
 //
 // 注意：本文件刻意不使用 cobra 等 CLI 框架——实测（2026-10-04）带 cobra.Execute()
 // 的二进制在 explorer 双击启动环境下会被火绒（Huorong）静默终止（进程 2-3 秒后消失、
@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,6 +122,8 @@ func run(args []string) error {
 		return runLs(args[1:])
 	case "show":
 		return runShow(args[1:])
+	case "search":
+		return runSearch(args[1:])
 	case "export":
 		return runExport(args[1:])
 	case "tui":
@@ -150,6 +153,10 @@ func printUsage() {
       --harness <name>       只列出指定 harness 的会话
   hm show <harness> <sid>    打印某会话的时间线
       --full                 打印内容全文（默认截断到 120 字符）
+  hm search <关键词>         全文检索会话内容（不开 GUI，直接搜本地库）
+      --harness <name>       只搜指定 harness
+      --limit N              命中上限（默认 500）
+      --context N            命中处上下文行数（默认 2）
   hm export <harness> <sid>  把某会话导出为 Markdown 文件（含每步内容与说明书）
       -o <path>              输出文件路径（默认 exports/<harness>-<sid前8位>.md）
   hm tui                     启动 TUI（三级导航）
@@ -355,6 +362,140 @@ func runShow(args []string) error {
 		}
 	}
 	return nil
+}
+
+// defaultSearchContext 是 search 命中窗口的默认大小（命中点前后各显示的字符数）。
+const defaultSearchContext = 40
+
+// runSearch 实现子命令 search：不开 GUI 直接检索本地库的会话内容。
+// 查询复用 store.SearchEvents（与 GUI/TUI 搜索同一条路径），输出按 harness → 会话
+// 分组，每条命中给出命中点上下文窗口——完整内容用 hm show <harness> <sid> 深入。
+func runSearch(args []string) error {
+	harness := ""
+	limit, ctx := 0, defaultSearchContext
+	positional := []string{}
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--harness" && i+1 < len(args):
+			harness = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--harness="):
+			harness = strings.TrimPrefix(args[i], "--harness=")
+		case args[i] == "--limit" && i+1 < len(args):
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n <= 0 {
+				return fmt.Errorf("--limit 需要正整数（给了 %q）", args[i+1])
+			}
+			limit = n
+			i++
+		case strings.HasPrefix(args[i], "--limit="):
+			v := strings.TrimPrefix(args[i], "--limit=")
+			n, err := strconv.Atoi(v)
+			if err != nil || n <= 0 {
+				return fmt.Errorf("--limit 需要正整数（给了 %q）", v)
+			}
+			limit = n
+		case args[i] == "--context" && i+1 < len(args):
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 0 {
+				return fmt.Errorf("--context 需要非负整数（给了 %q）", args[i+1])
+			}
+			ctx = n
+			i++
+		case strings.HasPrefix(args[i], "--context="):
+			v := strings.TrimPrefix(args[i], "--context=")
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return fmt.Errorf("--context 需要非负整数（给了 %q）", v)
+			}
+			ctx = n
+		case args[i] == "-h" || args[i] == "--help":
+			printUsage()
+			return nil
+		default:
+			positional = append(positional, args[i])
+		}
+	}
+	if len(positional) != 1 {
+		printUsage()
+		return fmt.Errorf("search 需要一个参数：<关键词>（给了 %d 个）", len(positional))
+	}
+	query := positional[0]
+
+	s, err := store.Open()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	hits, err := s.SearchEvents(harness, query, limit)
+	if err != nil {
+		return err
+	}
+	if len(hits) == 0 {
+		scope := "全部 harness"
+		if harness != "" {
+			scope = harness
+		}
+		fmt.Printf("无命中：%q（范围：%s）\n", query, scope)
+		return nil
+	}
+
+	fmt.Printf("搜索 %q：%d 条命中\n\n", query, len(hits))
+	cur := "" // 当前分组的 harness/session，命中已按其排序，换组时打表头
+	for _, h := range hits {
+		key := h.Harness + "\x00" + h.SessionID
+		if key != cur {
+			cur = key
+			fmt.Printf("== %s / %s ==\n", h.Harness, h.SessionID)
+		}
+		fmt.Printf("%s  %-14s  %s\n", fmtTime(h.Time), h.Kind, oneLine(truncate(h.Title, 80)))
+		if ctx <= 0 {
+			fmt.Printf("    %s\n\n", oneLine(truncate(h.Content, 160)))
+			continue
+		}
+		fmt.Printf("    %s\n\n", matchWindow(h.Content, query, ctx))
+	}
+	if limit > 0 && len(hits) == limit {
+		fmt.Printf("（已达 --limit %d，可能还有更多命中——调大 limit 或用 --harness 缩小范围）\n", limit)
+	}
+	return nil
+}
+
+// matchWindow 从内容里找第一处命中行，返回以命中点为中心的窗口（前后各 around 字符）。
+// 单条事件内容可达数 MB（工具结果全文），直接打印会灌爆终端——窗口让上下文一眼可见。
+// 命中可能落在 title 或大小写形态不同（SQL LIKE 的匹配面比这里宽），找不到时退回内容开头截断。
+func matchWindow(content, query string, around int) string {
+	if around <= 0 {
+		return oneLine(truncate(content, 160))
+	}
+	nq := strings.ToLower(query)
+	for _, line := range strings.Split(content, "\n") {
+		pos := strings.Index(strings.ToLower(line), nq)
+		if pos < 0 {
+			continue
+		}
+		r := []rune(line)
+		ri := len([]rune(line[:pos])) // 命中点的 rune 下标
+		rq := len([]rune(query))
+		start, end := ri-around, ri+rq+around
+		if start < 0 {
+			start = 0
+		}
+		if end > len(r) {
+			end = len(r)
+		}
+		var b strings.Builder
+		if start > 0 {
+			b.WriteString("…")
+		}
+		b.WriteString(strings.TrimSpace(string(r[start:end])))
+		if end < len(r) {
+			b.WriteString("…")
+		}
+		return b.String()
+	}
+	return oneLine(truncate(content, 2*around+60))
 }
 
 func runExport(args []string) error {

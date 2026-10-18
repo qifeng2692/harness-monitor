@@ -46,6 +46,18 @@ hm export <harness> <session-id>          # 输出到 exports/<harness>-<sid前8
 hm export hermes 20261005_132047_a2ca7c -o 会话.md
 ```
 
+### 全文检索（CLI）
+
+不开 GUI 直接搜本地库的会话内容——对标 sessiongrep 的「从命令行搜会话」能力（这里复用 GUI 搜索的同一套匹配逻辑，无需单独建索引）：
+
+```bash
+hm search "git push"                      # 搜全部 harness，命中按 harness → 会话 分组
+hm search "水位" --harness hermes         # 只搜某家
+hm search "proxy" --limit 50 --context 0  # 限命中数；context=0 只显示内容开头
+```
+
+每条命中给出时间 / 类型 / 标题和命中点上下文窗口（单条内容可达数 MB，窗口让你一眼看到命中处）；要读全文再 `hm show <harness> <session-id> --full`。
+
 ## 数据来源
 
 各 harness 的本地会话存储（只读采集，增量续读）：
