@@ -159,6 +159,7 @@ func printUsage() {
       --context N            命中处上下文行数（默认 2）
   hm export <harness> <sid>  把某会话导出为 Markdown 文件（含每步内容与说明书）
       -o <path>              输出文件路径（默认 exports/<harness>-<sid前8位>.md）
+      --no-redact            关闭脱敏（默认把个人路径/邮箱/密钥替换为 [已脱敏:…]）
   hm tui                     启动 TUI（三级导航）
   hm version                 打印版本
 `)
@@ -500,6 +501,7 @@ func matchWindow(content, query string, around int) string {
 
 func runExport(args []string) error {
 	outPath := ""
+	noRedact := false
 	positional := []string{}
 	for i := 0; i < len(args); i++ {
 		switch {
@@ -508,6 +510,8 @@ func runExport(args []string) error {
 			i++
 		case strings.HasPrefix(args[i], "-o="):
 			outPath = strings.TrimPrefix(args[i], "-o=")
+		case args[i] == "--no-redact":
+			noRedact = true
 		case args[i] == "-h" || args[i] == "--help":
 			printUsage()
 			return nil
@@ -546,7 +550,7 @@ func runExport(args []string) error {
 		return err
 	}
 
-	doc := export.Session(harness, sess.Title, sess.FirstTime, sess.LastTime, events)
+	doc := export.SessionOpts(harness, sess.Title, sess.FirstTime, sess.LastTime, events, export.Opts{Redact: !noRedact})
 
 	if outPath == "" {
 		id := sessionID

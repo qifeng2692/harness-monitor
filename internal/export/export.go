@@ -18,12 +18,24 @@ import (
 	"github.com/qifeng2692/harness-monitor/internal/model"
 )
 
-// Session 把一个会话导出为 Markdown 文本。
+// Session 把一个会话导出为 Markdown 文本（默认脱敏，等同 SessionOpts{Redact: true}）。
 //
 // title/first/last 为会话级元信息（可零值，导出时如实标注）；
 // events 为该会话全部事件（按 seq 升序——store.ListEvents 已保证，
 // 这里再兜底排一次，保证调用方乱序传入也不出错）。
 func Session(harness, title string, first, last time.Time, events []model.Event) string {
+	return SessionOpts(harness, title, first, last, events, Opts{Redact: true})
+}
+
+// Opts 控制导出行为。
+type Opts struct {
+	// Redact 开启导出脱敏：内容里的个人路径 / 邮箱 / 密钥替换为
+	// [已脱敏:…] 占位符，让导出文件可以直接分享（对标 akmon 的 redact）。
+	Redact bool
+}
+
+// SessionOpts 同 Session，但可关闭脱敏（CLI 的 --no-redact 走这里）。
+func SessionOpts(harness, title string, first, last time.Time, events []model.Event, opt Opts) string {
 	// 兜底排序：导出文档的步骤顺序必须与 seq 一致。
 	evs := make([]model.Event, len(events))
 	copy(evs, events)
@@ -43,21 +55,39 @@ func Session(harness, title string, first, last time.Time, events []model.Event)
 		}
 	}
 
+	// 脱敏：对内容生效；标题同样可能含路径/邮箱（如「编辑 C:\Users\x\a.go」），一并处理。
+	redactN := 0
+	if opt.Redact {
+		for i := range evs {
+			var n int
+			evs[i].Content, n = Redact(evs[i].Content)
+			redactN += n
+			evs[i].Title, n = Redact(evs[i].Title)
+			redactN += n
+		}
+		var n2 int
+		title, n2 = Redact(title)
+		redactN += n2
+	}
+
 	var b strings.Builder
-	writeHeader(&b, harness, title, first, last, len(evs), errCount)
+	writeHeader(&b, harness, title, first, last, len(evs), errCount, opt.Redact, redactN)
 	for i := range evs {
 		writeStep(&b, i+1, &evs[i], &explains[i])
 	}
 	return b.String()
 }
 
-func writeHeader(b *strings.Builder, harness, title string, first, last time.Time, steps, errCount int) {
+func writeHeader(b *strings.Builder, harness, title string, first, last time.Time, steps, errCount int, redacted bool, redactN int) {
 	b.WriteString(fmt.Sprintf("# 会话导出：%s\n\n", orDash(title)))
 	b.WriteString(fmt.Sprintf("- Harness：%s\n", orDash(harness)))
 	b.WriteString(fmt.Sprintf("- 时间：%s → %s\n", fmtTime(first), fmtTime(last)))
 	b.WriteString(fmt.Sprintf("- 步骤数：%d\n", steps))
 	if errCount > 0 {
 		b.WriteString(fmt.Sprintf("- 失败/异常：%d 步（文中以「⚠ 失败」标出）\n", errCount))
+	}
+	if redacted {
+		b.WriteString(RedactNote(redactN))
 	}
 	b.WriteString("\n本文由 harness-monitor 导出：每一步含完整内容与自然语言说明书（这一步是什么 / 输入来自 / 输出去向 / 为什么流转）。\n\n---\n\n")
 }

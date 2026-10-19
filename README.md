@@ -41,9 +41,12 @@ Hermes · Codex · Claude Code · pi（另采集 magpie 网关用量）
 
 把任一会话导出成自包含的 Markdown 文件——每一步含完整内容与自然语言说明书（含工具往返配对、失败标记），可直接阅读、归档或分享：
 
+导出默认开启脱敏：内容里的个人路径（`C:\Users\…`）、邮箱、API 密钥会被替换为 `[已脱敏:…]` 占位符（文首注明替换处数），分享导出文件不再带走本机隐私；要原文导出加 `--no-redact`：
+
 ```bash
-hm export <harness> <session-id>          # 输出到 exports/<harness>-<sid前8位>.md
+hm export <harness> <session-id>          # 输出到 exports/<harness>-<sid前8位>.md（默认脱敏）
 hm export hermes 20261005_132047_a2ca7c -o 会话.md
+hm export hermes 20261005_132047_a2ca7c --no-redact   # 原文导出
 ```
 
 ### 全文检索（CLI）
