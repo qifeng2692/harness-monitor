@@ -61,6 +61,22 @@ hm search "proxy" --limit 50 --context 0  # 限命中数；context=0 只显示�
 
 每条命中给出时间 / 类型 / 标题和命中点上下文窗口（单条内容可达数 MB，窗口让你一眼看到命中处）；要读全文再 `hm show <harness> <session-id> --full`。
 
+### 跨会话统计（CLI）
+
+不开 GUI 一眼看全局——对标 sniffly / token-dashboard 首页的概览面板：规模、用量、工具热点、失败原因四个维度：
+
+```bash
+hm stats                            # 全部 harness 的统计报告
+hm stats --harness hermes           # 只看某家
+hm stats --top 20                   # 工具与失败原因各列前 20 条
+```
+
+报告给的是**跨 harness 可比**的数字，不是各家自报值的直接相加——各家的 token 口径不同（codex 的输入字段本身含缓存命中、pi 的合计含缓存、hermes/claude 的合计不含），直接相加得到的总数不是同一把尺子。因此：
+
+- **处理 token** = 新输入 + 缓存读 + 输出（统一口径，报告里的三项之和恒等于总数）
+- **新输入** = 不含缓存命中的部分（codex 的输入要扣掉缓存命中）
+- **工具失败**只认各家自己上报的结构化字段（`meta.is_error`）；「判不了」（工具结果不带失败信号，如 codex/claude）与「没失败」分开报，不混为一谈
+
 ## 数据来源
 
 各 harness 的本地会话存储（只读采集，增量续读）：

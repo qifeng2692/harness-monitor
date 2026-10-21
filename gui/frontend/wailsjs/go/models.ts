@@ -266,6 +266,8 @@ export namespace usage {
 	    costKnown: boolean;
 	    failedCalls: number;
 	    models: ModelUsage[];
+	    cacheInTotal: boolean;
+	    inputIncludesCache: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Summary(source);
@@ -285,6 +287,8 @@ export namespace usage {
 	        this.costKnown = source["costKnown"];
 	        this.failedCalls = source["failedCalls"];
 	        this.models = this.convertValues(source["models"], ModelUsage);
+	        this.cacheInTotal = source["cacheInTotal"];
+	        this.inputIncludesCache = source["inputIncludesCache"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

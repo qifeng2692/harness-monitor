@@ -167,12 +167,18 @@ function renderUsageBar() {
     `<span class="usage-item"${title ? ` title="${esc(title)}"` : ""}><span class="usage-label">${esc(label)}</span>${esc(value)}</span>`;
 
   const parts = [];
-  parts.push(item("输入", fmtTokens(u.inputTokens), "输入 token（不含缓存读取）"));
+  // 输入的口径各家不同：codex 的 input_tokens 本身含缓存命中，其余家的缓存读是
+  // 单列的另一项。后端已把这两点标在 summary 上（inputIncludesCache /
+  // cacheInTotal），这里照实标注，别让用户以为「输入」一律不含缓存。
+  const inputTitle = u.inputIncludesCache
+    ? "输入 token（含缓存命中部分——codex 的输入字段本身就是含缓存的）"
+    : "输入 token（不含缓存读取）";
+  parts.push(item("输入", fmtTokens(u.inputTokens), inputTitle));
   parts.push(item("输出", fmtTokens(u.outputTokens), "输出 token"));
   if (u.cacheRead) parts.push(item("缓存读", fmtTokens(u.cacheReadTokens), "从缓存读取的 token（计费通常更低）"));
   if (u.cacheWrite) parts.push(item("缓存写", fmtTokens(u.cacheWriteTokens), "写入缓存的 token"));
   if (u.reasoning) parts.push(item("推理", fmtTokens(u.reasoningTokens), "思考/推理 token"));
-  parts.push(`<span class="usage-total">合计 ${esc(fmtTokens(u.totalTokens))} tokens</span>`);
+  parts.push(`<span class="usage-total"${u.cacheInTotal ? ' title="合计已包含缓存读取的 token"' : ' title="合计不含缓存读取（缓存读是上面单列的一项）"'}>合计 ${esc(fmtTokens(u.totalTokens))} tokens</span>`);
   if (u.costKnown) {
     parts.push(`<span class="usage-cost">${esc(fmtCost(u.costUsd, true))}</span>`);
   } else {

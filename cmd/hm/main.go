@@ -124,6 +124,8 @@ func run(args []string) error {
 		return runShow(args[1:])
 	case "search":
 		return runSearch(args[1:])
+	case "stats":
+		return runStats(args[1:])
 	case "export":
 		return runExport(args[1:])
 	case "tui":
@@ -157,6 +159,9 @@ func printUsage() {
       --harness <name>       只搜指定 harness
       --limit N              命中上限（默认 500）
       --context N            命中处上下文行数（默认 2）
+  hm stats [flags]           跨会话统计报告（规模 / 用量 / 工具 / 失败）
+      --harness <name>       只统计指定 harness
+      --top N                工具与失败原因各列前 N 条（默认 10）
   hm export <harness> <sid>  把某会话导出为 Markdown 文件（含每步内容与说明书）
       -o <path>              输出文件路径（默认 exports/<harness>-<sid前8位>.md）
       --no-redact            关闭脱敏（默认把个人路径/邮箱/密钥替换为 [已脱敏:…]）

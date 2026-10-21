@@ -58,6 +58,42 @@ type Summary struct {
 	CostKnown    bool         `json:"costKnown"`   // 至少一条记录带了费用字段（否则 $0 是「未知」而非「免费」）
 	FailedCalls  int64        `json:"failedCalls"` // 非 200 状态的调用数（限流 429 / 超时 499 等）
 	Models       []ModelUsage `json:"models"`      // 分模型小计（按 total 降序；无法分辨模型时为空）
+
+	// CacheInTotal 说明「合计 token」是否**已经包含**缓存读取。
+	// 跨 harness 比较总量时靠它对齐口径（见 CacheInTotal 的说明）。
+	CacheInTotal bool `json:"cacheInTotal"`
+	// InputIncludesCache 说明「输入 token」字段本身是否**已经包含**缓存读取。
+	// 算「不含缓存的新输入」时靠它扣减（见 InputIncludesCache 的说明）。
+	InputIncludesCache bool `json:"inputIncludesCache"`
+}
+
+// CacheInTotal 的口径（各家记录形态不同，见包注释）：
+//
+//	codex：input_tokens 本身含 cached_input_tokens，总计 = 输入 + 输出 → 含缓存；
+//	pi   ：total_tokens = 输入 + cache_read + 输出(+推理) → 含缓存；
+//	其余 ：记录里没有合计字段，合计由「输入 + 输出」补齐，而缓存读是单列的另一项
+//	       → 不含缓存。
+//
+// 用途：跨 harness 求「一共处理了多少 token」时，不含缓存的那几家要把 CacheRead
+// 补进来——否则同一个问题在不同家之间不是同一把尺子。
+func cacheInTotal(harness string) bool {
+	switch harness {
+	case "codex", "pi":
+		return true
+	default:
+		return false
+	}
+}
+
+// InputIncludesCache 的口径：
+//
+//	codex：input_tokens 已含 cached_input_tokens（实测合计 = 输入 + 输出，
+//	        且输入的 97.4% 都是缓存命中）→ true；
+//	其余  ：缓存读单列，输入不含它 → false。
+//
+// 用途：算「不含缓存的新输入」时，codex 要从输入里扣掉缓存读，其余不用扣。
+func inputIncludesCache(harness string) bool {
+	return harness == "codex"
 }
 
 // Summarize 合计某 harness 某会话的事件流（口径见包注释）。
@@ -179,6 +215,8 @@ func parseRecord(e model.Event) (record, bool) {
 func aggregate(harness string, recs []record) Summary {
 	var s Summary
 	byModel := map[string]*ModelUsage{}
+	s.CacheInTotal = cacheInTotal(harness)
+	s.InputIncludesCache = inputIncludesCache(harness)
 
 	for _, r := range recs {
 		if r.bad {
