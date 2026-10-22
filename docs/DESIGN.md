@@ -256,6 +256,31 @@ GUI 的「错误」筛选与 `.kind-error`）全都存在，但**没有任何采
 
 配对是纯函数（`PairEvents` / `ExplainOnePaired`），主监控、对比实验台、`cmd/explainpreview` 共用同一实现。
 
+## 重复调用环（tool loop，2026-10-22 实测）
+
+`hm stats` 能回答「失败了多少次」，答不了「同一个动作是不是卡在原地反复做」。后者才是
+agent 空转最常见的样子：同一条命令、同一个参数，失败一次、再一次、又一次——每次都记了
+日志，但没人把它单独拎出来说「这里在打转」。同类工具把这条当核心信号：MINDLAS 叫它
+tool loop，rungraph 叫它 retry storm。
+
+判定口径（`internal/loops` 纯函数 + `internal/store/loops.go` 取数层）：
+
+| 维度 | 口径 | 理由 |
+|---|---|---|
+| 「重复」 | 同一会话 + 同一工具 + 同一组参数 | 结构事实，不依赖失败信号 → codex/claude 也能查出来 |
+| 「次数」 | 按 `meta.call_id` 去重 | 实测库里 5139 个 call_id 被采了两遍，按行数算会把「重复采集」误报成「重复调用」 |
+| 「失败」 | 只认 `meta.is_error` | hermes 成功也写 false（判得了）、pi 只在失败时写 true、codex/claude 不带该字段（判不了） |
+| 阈值 | 默认 3 | 实测：阈值 3 命中 367 组 / 126 会话；阈值 5 命中 96 组 |
+
+**为什么不在 SQL 里 JOIN**：`tool.call LEFT JOIN tool.result ON parent_id =
+json_extract(meta,'$.call_id')` 在本机 500MB 库上跑 180 秒没跑完（无索引的 JSON 提取 +
+字符串 JOIN）。改成「两次平表查询 + Go 里归组」后各只要 ~1 秒，整条命令 ~10 秒。
+
+**验收**：`internal/loops` 12 条单测（含 call_id 去重、跨 harness 不混组、判不了不当作
+成功）、`internal/store` 2 条单测（取数与失败判定）；真实库 E2E 与 Python 口径逐项核对
+一致（367 组 / 126 会话 / 阈值 5 → 96 组）。
+
+
 ## 验证方式
 
 - 每个采集器：以本机真实文件为输入，`hm collect` 跑通并打印统计；`hm show` 抽查内容与源文件一致（含全文）；
