@@ -86,6 +86,17 @@ type SessionInfo struct {
 	LastTime   string `json:"lastTime"`
 	Title      string `json:"title"`
 	Pinned     bool   `json:"pinned"`
+
+	// State 是会话当前状态（waiting / failed / done / active / idle），
+	// StateLabel 是中文标签，StateReason 是一句话说明。
+	// 有了这三个字段，用户在列表上就能看出哪个会话在等他回答、哪个刚失败——
+	// 不用逐个点进去翻时间线（见 gui/session_state.go）。
+	State       string `json:"state"`
+	StateLabel  string `json:"stateLabel"`
+	StateReason string `json:"stateReason"`
+
+	// PendingQuestion 是正在等用户回答的问题正文（只在 waiting 时有）。
+	PendingQuestion string `json:"pendingQuestion"`
 }
 
 // EventInfo 是时间线步骤（内容全文）。
@@ -150,6 +161,9 @@ func (a *App) ListHarnesses() ([]HarnessInfo, error) {
 }
 
 // ListSessions 返回某 harness 的会话列表。
+//
+// 每项都带上会话当前状态（等待你 / 失败 / 进行中 / 已完成 / 空闲）——
+// 用户在列表上就能看出哪个会话卡住了，不用逐个点进去翻时间线。
 func (a *App) ListSessions(harness string) ([]SessionInfo, error) {
 	if a.store == nil {
 		return nil, fmt.Errorf("数据库未打开")
@@ -158,16 +172,28 @@ func (a *App) ListSessions(harness string) ([]SessionInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	states, err := a.sessionStates(harness)
+	if err != nil {
+		// 状态算不出来也不该让整个列表挂掉——退回没有状态标记的列表。
+		states = map[string]SessionStateInfo{}
+	}
 	out := make([]SessionInfo, 0, len(sessions))
 	for _, s := range sessions {
-		out = append(out, SessionInfo{
+		info := SessionInfo{
 			SessionID:  s.SessionID,
 			EventCount: s.EventCount,
 			FirstTime:  fmtTime(s.FirstTime),
 			LastTime:   fmtTime(s.LastTime),
 			Title:      s.Title,
 			Pinned:     s.Pinned,
-		})
+		}
+		if st, ok := states[harness+"\x00"+s.SessionID]; ok {
+			info.State = st.State
+			info.StateLabel = st.StateLabel
+			info.StateReason = st.StateReason
+			info.PendingQuestion = st.PendingQuestion
+		}
+		out = append(out, info)
 	}
 	return out, nil
 }

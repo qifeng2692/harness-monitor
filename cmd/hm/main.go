@@ -126,6 +126,8 @@ func run(args []string) error {
 		return runSearch(args[1:])
 	case "stats":
 		return runStats(args[1:])
+	case "status":
+		return runStatus(args[1:])
 	case "loops":
 		return runLoops(args[1:])
 	case "export":
@@ -164,6 +166,9 @@ func printUsage() {
   hm stats [flags]           跨会话统计报告（规模 / 用量 / 工具 / 失败）
       --harness <name>       只统计指定 harness
       --top N                工具与失败原因各列前 N 条（默认 10）
+  hm status [flags]          会话当前状态——谁在等回答、谁失败了（默认只列要你出手的）
+      --harness <name>       只看指定 harness
+      --all                  列出全部会话的状态（不只列要你出手的）
   hm loops [flags]           找出重复的工具调用环（同一会话同一工具同一参数反复调用）
       --harness <name>       只查指定 harness
       --threshold N          同一组重复几次才算「打转」（默认 3）

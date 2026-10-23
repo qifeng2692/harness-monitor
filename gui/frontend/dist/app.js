@@ -217,19 +217,49 @@ function renderUsageBar() {
 }
 
 // ---- 渲染：会话 ----
+//
+// 会话项上带一个状态标记（等待你 / 失败 / 进行中 / 已完成 / 空闲）——
+// 这是竞品（tmux-agent-sidebar 的状态列、MioIsland 的待批准提醒）都有、
+// 而我们此前没有的东西：不用点进时间线就知道哪个会话卡住了。
+const STATE_LABEL = {
+  waiting: "等待你",
+  failed: "失败",
+  done: "已完成",
+  active: "进行中",
+  idle: "空闲",
+};
+
+function stateBadge(s) {
+  if (!s.state) return "";
+  const label = s.stateLabel || STATE_LABEL[s.state] || "";
+  if (!label) return "";
+  const tip = s.pendingQuestion
+    ? `${s.stateReason || ""}\n${s.pendingQuestion}`
+    : (s.stateReason || "");
+  return `<span class="state-badge state-${esc(s.state)}" title="${esc(tip)}">${esc(label)}</span>`;
+}
+
 function renderSessions() {
   const ul = $("sessionList");
   ul.innerHTML = "";
   const filter = $("sessionFilter").value.trim().toLowerCase();
   const list = state.sessions.filter((s) =>
     !filter || s.sessionId.toLowerCase().includes(filter) || (s.title || "").toLowerCase().includes(filter));
+  // 需要你出手的会话排最前——它们是最该被看到的。
+  const rank = { waiting: 0, failed: 1, active: 2, done: 3, idle: 4 };
+  list.sort((a, b) => {
+    const ra = rank[a.state] === undefined ? 5 : rank[a.state];
+    const rb = rank[b.state] === undefined ? 5 : rank[b.state];
+    if (ra !== rb) return ra - rb;
+    return (b.lastTime || "").localeCompare(a.lastTime || "");
+  });
   for (const s of list) {
     const li = document.createElement("li");
     li.className = "session-item" + (s.sessionId === state.currentSession ? " selected" : "") + (s.pinned ? " pinned" : "");
     li.innerHTML = `
       <button class="pin-btn" title="${s.pinned ? "取消置顶" : "置顶会话"}">${s.pinned ? "📌" : "·"}</button>
       <div class="session-body">
-        <div class="session-title">${esc(s.title || s.sessionId)}</div>
+        <div class="session-title">${stateBadge(s)}<span class="session-title-text">${esc(s.title || s.sessionId)}</span></div>
         <div class="session-id">${esc(s.sessionId)}</div>
         <div class="session-meta"><span>${s.eventCount} 事件</span><span>${esc((s.lastTime || "").slice(5, 16))}</span></div>
       </div>`;
@@ -538,7 +568,11 @@ async function liveTick() {
         const tl = $("timeline");
         tl.scrollTop = tl.scrollHeight; // 自动滚到底部
       }
-    } else if (state.currentHarness) {
+    }
+    // 会话列表要一起刷新：状态标记（等待你 / 失败）是会变的——
+    // agent 跑完一轮就从「进行中」变成「已完成」，也可能中途等你回答。
+    // 不刷新的话，标记会停在打开页面那一刻的样子。
+    if (state.currentHarness) {
       state.sessions = await window.go.main.App.ListSessions(state.currentHarness);
       renderSessions();
     }

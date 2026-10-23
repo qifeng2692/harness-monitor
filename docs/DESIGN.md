@@ -280,6 +280,56 @@ json_extract(meta,'$.call_id')` 在本机 500MB 库上跑 180 秒没跑完（无
 成功）、`internal/store` 2 条单测（取数与失败判定）；真实库 E2E 与 Python 口径逐项核对
 一致（367 组 / 126 会话 / 阈值 5 → 96 组）。
 
+## 会话当前状态（session state，2026-10-23 实测）
+
+此前 harness-monitor 只回答「这个会话里发生了什么」，答不了「这个会话现在卡在哪、
+要不要我出手」——会话列表只有 id/标题/事件数/时间，用户看不出哪个会话正等着他回答、
+哪个刚失败，只能逐个点进去翻时间线。
+
+同类工具都把「会话当前状态」当核心信息：tmux-agent-sidebar 的侧边栏每个 pane 一列
+状态（含 needs permission / 等待原因），MioIsland 从刘海里直接看到并批准待处理请求。
+
+判定口径（`internal/sessionstate` 纯函数 + `internal/store/session_facts.go` 取数层）：
+
+| 状态 | 口径 | 理由 |
+|---|---|---|
+| 等待你 | 存在「等人回答类」工具调用 + 没拿到回答 + 用户之后没再说话 | 三个条件缺一不可：用户后来说过话说明 agent 已经往下走了，不算卡住 |
+| 失败 | 最后一步是 `error` 事件 | 只认各家自己上报的结构化字段 |
+| 已完成 | 最后一步是 `turn.end` / `session.end` | 明确收尾的终态标记 |
+| 进行中 | 最后一次动作在 90 分钟内 | agent 干活时连续追加事件，不会中途停 90 分钟 |
+| 空闲 | 其余 | — |
+
+「等人回答类」的工具名清单（实测本机库里出现过的，不是猜测）：hermes `clarify`、
+pi `ask_user_question`、claude `AskUserQuestion`、codex `request_user_input` 与
+`request_permissions`。清单单点定义（`store.askToolNames`），SQL 的 `title IN (...)`
+与 Go 侧判定同源。
+
+**各家的回答形态**（解析不出来就说判不了，不把「看不懂」当成「没回答」）：
+
+| harness | 形态 | 「答了」的样子 |
+|---|---|---|
+| hermes | `{"responses":[{"question":..,"user_response":".."}]}` | `user_response` 非空 |
+| pi / claude | 纯文本 | `User has answered your questions: ...` / `User declined to answer questions` |
+| codex | `{"answers":{"<id>":{"answers":[...]}}}` | 外层与内层同名，注意别认错层 |
+| codex | `{"permissions":{...},"scope":"turn"}` | 授权本身是回答；全 null = 被拒绝 |
+
+**取数性能**（本机库 500MB / 23 万事件）：三处查询写法直接决定 GUI 是否卡——
+
+- 取「每个会话的最后一步」：窗口函数 `ROW_NUMBER()` 要 **8.3 秒**，改成
+  `GROUP BY MAX(seq) + JOIN` 只要 **121 毫秒**（差 70 倍，结果完全一样）；
+- 捞「等人回答类」的调用：取回全部 7 万条 `tool.call` 再在 Go 里筛要 **468 毫秒**，
+  把 `title IN (...)` 写进 SQL（配 `(kind, title)` 索引）只要 **4 毫秒**；
+- 按调用键捞配对结果：没有 `(kind, parent_id)` 索引要 **697 毫秒**，有了 **1 毫秒**。
+
+三条索引已进 `internal/store/store.go` 的 schema：`idx_events_kind_hss`、
+`idx_events_kind_title`、`idx_events_kind_parent`。加上之后整体取数 **1.27 秒 →
+565 毫秒**，顺带把 GUI 既有的 `ListSessions`（原本 4.3 秒）也带快了 10 倍。
+
+**验收**：`internal/sessionstate` 10 条单测（五种状态、用户后来说话不算卡住、失败/
+完成压过等待、四家问题提取）、`internal/store` 4 条单测（取数、各家回答形态、判不了的
+结果）、`gui` 2 条单测（列表带状态、状态汇总）；真实库 E2E 跑通（1335 个会话判定出
+7 个等待 / 18 个失败），GUI 截图见 `docs/screenshots/session-state.png`。
+
 
 ## 验证方式
 

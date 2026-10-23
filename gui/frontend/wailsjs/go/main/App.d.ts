@@ -29,6 +29,10 @@ export function OpenInExplorer():Promise<void>;
 
 export function Search(arg1:string,arg2:string):Promise<Array<main.SearchHitInfo>>;
 
+export function SessionStateSummary(arg1:string):Promise<main.SessionStateSummary>;
+
+export function SessionStates(arg1:string):Promise<Array<main.SessionStateInfo>>;
+
 export function SessionUsage(arg1:string,arg2:string):Promise<usage.Summary>;
 
 export function SetSessionPinned(arg1:string,arg2:string,arg3:boolean):Promise<void>;

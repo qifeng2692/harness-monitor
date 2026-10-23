@@ -109,6 +109,20 @@ body {
 .session-item.selected { background: #1f6feb33; border-left: 3px solid var(--accent); padding-left: 9px; }
 .session-item.pinned .session-title { color: var(--accent); }
 .session-body { flex: 1; min-width: 0; }
+.session-title { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 5px; }
+.session-title-text { overflow: hidden; text-overflow: ellipsis; }
+
+/* 会话状态标记：等待你 / 失败 / 进行中 / 已完成 / 空闲 */
+.state-badge {
+  flex: none; font-size: 10px; font-weight: 500; line-height: 15px;
+  padding: 0 5px; border-radius: 3px; border: 1px solid transparent;
+  white-space: nowrap; cursor: default;
+}
+.state-badge.state-waiting { color: #d29922; background: #d2992222; border-color: #d2992255; }
+.state-badge.state-failed  { color: #f85149; background: #f8514922; border-color: #f8514955; }
+.state-badge.state-active  { color: #3fb950; background: #3fb95022; border-color: #3fb95055; }
+.state-badge.state-done    { color: var(--fg-dim); background: #21262d; border-color: #30363d; }
+.state-badge.state-idle    { color: var(--fg-dim); background: transparent; border-color: #30363d; }
 .pin-btn {
   flex: none; width: 18px; height: 20px; margin-top: 1px;
   background: none; border: none; cursor: pointer;
@@ -118,7 +132,6 @@ body {
 .session-item:hover .pin-btn { opacity: 1; }
 .pin-btn:hover { opacity: 1; transform: scale(1.15); }
 .session-item.pinned .pin-btn { opacity: 1; }
-.session-title { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-id { color: var(--fg-dim); font-size: 11px; font-family: var(--mono); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-meta { color: var(--fg-dim); font-size: 11px; margin-top: 2px; display: flex; gap: 10px; }
 

@@ -34,6 +34,15 @@ CREATE TABLE IF NOT EXISTS events (
 	source_key TEXT    UNIQUE
 );
 CREATE INDEX IF NOT EXISTS idx_events_hss ON events(harness, session_id, seq);
+-- 按 kind 取数用（会话状态判定、错误统计、用户输入定位都是「按 kind 过滤」）：
+-- 本机库实测 500MB / 23 万事件，没有这个索引时按 kind 扫要 3.7 秒，有了之后毫秒级。
+CREATE INDEX IF NOT EXISTS idx_events_kind_hss ON events(kind, harness, session_id, seq);
+-- 按 (kind, title) 取数用（会话状态判定要捞「等人回答类」的工具调用）：
+-- 没有这个索引时这一条要 468ms，有了之后 4ms。
+CREATE INDEX IF NOT EXISTS idx_events_kind_title ON events(kind, title, harness, session_id, seq);
+-- 按 (kind, parent_id) 取数用（工具调用与结果的配对：结果侧的键在 parent_id）：
+-- 没有这个索引时按调用键捞结果要 697ms，有了之后 1ms。
+CREATE INDEX IF NOT EXISTS idx_events_kind_parent ON events(kind, parent_id);
 CREATE TABLE IF NOT EXISTS ingest_state (
 	source  TEXT    NOT NULL,
 	file    TEXT    NOT NULL,

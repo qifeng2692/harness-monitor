@@ -95,6 +95,30 @@ hm loops --top 50                   # 列出前 50 组
 - **失败**只认各家自己上报的 `meta.is_error`；codex/claude 的工具结果不带该字段，报告显示「-」而不是假装「没失败」
 - 实测本机库（23 万事件 / 66 万次工具调用）：阈值 3 命中 367 组、涉及 126 个会话；阈值 5 命中 96 组
 
+### 会话当前状态（CLI + GUI）
+
+一眼看出**哪个会话正等着你回答、哪个刚失败**——对标 tmux-agent-sidebar 的状态列（needs permission / 等待原因）与 MioIsland 的待批准提醒。
+
+```bash
+hm status                           # 默认只列「要你出手」的会话（等待 + 失败）
+hm status --all                    # 列出全部会话的状态
+hm status --harness codex          # 只看某家
+```
+
+GUI 的会话列表每一项都带状态标记，需要你出手的会话自动排到最前：
+
+![会话状态](docs/screenshots/session-state.png)
+
+五种状态：**等待你**（问了但没得到回答）/ **失败**（最后一步是 error）/ **进行中**（90 分钟内还有动作）/ **已完成**（有 turn.end / session.end 终态标记）/ **空闲**。
+
+判定口径（只认结构化事实，不猜正文）：
+
+- **「等你回答」** = 存在一个「等人回答类」的工具调用（hermes 的 `clarify`、pi 的 `ask_user_question`、claude 的 `AskUserQuestion`、codex 的 `request_user_input` / `request_permissions`），且这次调用**没拿到回答**，且**用户在这之后没再说过话**（否则说明 agent 已经往下走了）
+- **「失败」**只认 `error` 事件；**「已完成」**只认 `turn.end` / `session.end`
+- 「用户答了」各家的回答形态不同（hermes 是 JSON 的 `responses[].user_response`、pi 是 `User has answered your questions: ...`、codex 是 `{"answers":{...}}`），都按实际形态解析；**解析不出来就说判不了**，不把「看不懂」当成「没回答」
+
+实测本机库：7 个会话在等回答、18 个以失败告终。
+
 ## 数据来源
 
 各 harness 的本地会话存储（只读采集，增量续读）：

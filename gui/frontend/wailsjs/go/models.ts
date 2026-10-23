@@ -205,6 +205,10 @@ export namespace main {
 	    lastTime: string;
 	    title: string;
 	    pinned: boolean;
+	    state: string;
+	    stateLabel: string;
+	    stateReason: string;
+	    pendingQuestion: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionInfo(source);
@@ -218,6 +222,48 @@ export namespace main {
 	        this.lastTime = source["lastTime"];
 	        this.title = source["title"];
 	        this.pinned = source["pinned"];
+	        this.state = source["state"];
+	        this.stateLabel = source["stateLabel"];
+	        this.stateReason = source["stateReason"];
+	        this.pendingQuestion = source["pendingQuestion"];
+	    }
+	}
+	export class SessionStateInfo {
+	    sessionId: string;
+	    state: string;
+	    stateLabel: string;
+	    stateReason: string;
+	    pendingQuestion: string;
+	    lastAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionStateInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sessionId = source["sessionId"];
+	        this.state = source["state"];
+	        this.stateLabel = source["stateLabel"];
+	        this.stateReason = source["stateReason"];
+	        this.pendingQuestion = source["pendingQuestion"];
+	        this.lastAt = source["lastAt"];
+	    }
+	}
+	export class SessionStateSummary {
+	    total: number;
+	    counts: Record<string, number>;
+	    labels: Record<string, number>;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionStateSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total = source["total"];
+	        this.counts = source["counts"];
+	        this.labels = source["labels"];
 	    }
 	}
 
