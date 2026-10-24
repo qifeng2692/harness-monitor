@@ -130,6 +130,8 @@ func run(args []string) error {
 		return runStatus(args[1:])
 	case "loops":
 		return runLoops(args[1:])
+	case "files":
+		return runFiles(args[1:])
 	case "export":
 		return runExport(args[1:])
 	case "tui":
@@ -173,6 +175,7 @@ func printUsage() {
       --harness <name>       只查指定 harness
       --threshold N          同一组重复几次才算「打转」（默认 3）
       --top N                列出前 N 组（默认 20）
+  hm files <harness> <sid>   某会话改动了哪些文件（按改动次数排序）
   hm export <harness> <sid>  把某会话导出为 Markdown 文件（含每步内容与说明书）
       -o <path>              输出文件路径（默认 exports/<harness>-<sid前8位>.md）
       --no-redact            关闭脱敏（默认把个人路径/邮箱/密钥替换为 [已脱敏:…]）

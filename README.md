@@ -119,6 +119,31 @@ GUI 的会话列表每一项都带状态标记，需要你出手的会话自动�
 
 实测本机库：7 个会话在等回答、18 个以失败告终。
 
+### 文件改动清单（CLI）
+
+一个会话**到底改动了哪些文件**——对标 agentacct 的 Work Receipt（把一次工作拆成 tools used / **files changed** / tests run / tokens）。前面几条命令分别回答「发生过什么」「花了多少」「卡在哪」「有没有打转」，这条回答「它动了哪些文件」：
+
+```bash
+hm files hermes 20261021_101005_6d4374    # 按改动次数排序，带操作类型、工具、首次步骤号
+hm files claude 3ae0ce8f-707a-46a0-9313-3a326cd75679
+```
+
+```
+hermes 20261021_101005_6d4374 — 改动了 44 个文件，共 198 次改动
+
+   次数  操作          工具                    首次步骤  文件
+     26  edit        patch                  608  G:/projects/douyin-video-pipeline/scripts/publish.mjs
+     25  write+edit  write_file,patch      1495  G:/projects/douyin-video-pipeline/scripts/cover-check.mjs
+```
+
+口径（只认结构化字段，不猜命令行）：
+
+- 只统计**参数里明确写了文件路径**的写文件工具：claude 的 `Edit` / `Write`（`file_path`）、hermes 的 `patch` / `write_file`（`path`）、pi 的 `edit` / `write`（`path`）——实测这三家的这些工具 99%+ 都带路径
+- 通过 shell 命令改的文件（codex 的 `exec_command`、claude 的 `Bash`、hermes 的 `terminal`、pi 的 `bash`）**不计入**：路径埋在命令行文本里，`Set-Content a.ps1` 和 `rg a.ps1` 长得一样，解析它等于猜。codex 因此给不出清单，命令会直接说明而不是编一个
+- 同一文件的 `G:\a\b.go` 与 `G:/a/b.go` 归成一条（只统一分隔符与 `./`，不做大小写折叠）
+- 参数里没有路径的写文件调用单独计数并明说「未计入」——缺失胜过猜错
+- 实测本机库：hermes 某会话 44 个文件 / 198 次改动，pi 某会话 166 个文件 / 804 次改动（804 条里 3 条没带路径）
+
 ## 数据来源
 
 各 harness 的本地会话存储（只读采集，增量续读）：

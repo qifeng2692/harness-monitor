@@ -331,6 +331,41 @@ pi `ask_user_question`、claude `AskUserQuestion`、codex `request_user_input` �
 7 个等待 / 18 个失败），GUI 截图见 `docs/screenshots/session-state.png`。
 
 
+## 文件改动清单（files changed，2026-10-24 实测）
+
+前面几条命令分别回答「发生过什么」（时间线）、「花了多少」（用量条）、「卡在哪」
+（会话状态）、「有没有打转」（loops），答不了「**它到底动了哪些文件**」。同类产品
+agentacct 把 files changed 放进 Work Receipt 最前面——人复查一次 agent 的工作，
+第一件事就是看它改了哪几个文件。
+
+实现分两层：`internal/filechange`（纯函数：判定 + 归组）与
+`internal/store/files.go`（取数：某会话的全部 `tool.call`），CLI 入口 `hm files`。
+
+**判定表只有一份**（`internal/filechange` 的 `rules`），按 harness → 工具名 → 路径字段：
+
+| harness | 写文件工具 | 路径字段 | 实测命中 |
+|---|---|---|---|
+| claude | `Write` / `Edit`（+ `MultiEdit` / `NotebookEdit`） | `file_path`（NotebookEdit 退 `notebook_path`） | 118/118、41/41 |
+| hermes | `write_file` / `patch` | `path`（改名时退 `new_path`） | 300/300、299/300 |
+| pi | `write` / `edit` | `path` | 298/300、299/300 |
+
+**不猜命令行**：codex 用 `exec_command`、claude 用 `Bash`、hermes 用 `terminal`、
+pi 用 `bash` 改文件时，路径只存在于命令行文本里（`Set-Content a.ps1` 与
+`rg a.ps1` 长得一样），解析它等于猜。这些改动**不计入**；`hm files codex ...`
+会直接说明「给不出清单」而不是编一个。参数里没有路径的写文件调用单独计数并明说
+「未计入」——缺失胜过猜错。
+
+**路径归一化**：分隔符统一为 `/`、清掉 `./` 与重复斜杠（用 `path` 而非 `filepath`，
+保证 Windows/Linux 结果一致），不做大小写折叠（Linux 上 `A.go` ≠ `a.go`）。
+同一文件的 `G:\a\b.go` 与 `G:/a/b.go` 因此归成一条。
+
+**验收**：`internal/filechange` 6 组单测（12 个 `Classify` 子例覆盖三家真实参数形态、
+无路径、非法 JSON、读工具、shell 工具、codex；归组与排序；空输入）、
+`internal/store` 1 条单测（只取本会话本家的 `tool.call`、按 seq 升序、时间原样读回）；
+真实库 E2E 与独立 SQL 核对完全一致——claude 会话 12 个文件 / 35 次改动、hermes
+会话 44 / 198、pi 会话 166 / 804（其中 3 条无路径，单独报出）。
+
+
 ## 验证方式
 
 - 每个采集器：以本机真实文件为输入，`hm collect` 跑通并打印统计；`hm show` 抽查内容与源文件一致（含全文）；
